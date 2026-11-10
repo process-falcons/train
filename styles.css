@@ -39,6 +39,7 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .mute{color:var(--mute)} .soft{color:var(--soft)} .acc{color:var(--accent)} .amb{color:var(--amber)}
 .small{font-size:12px} .tiny{font-size:11px}
 .label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700}
+.label.acc{color:var(--accent)} .label.amb{color:var(--amber)}
 .tag{height:24px;padding:0 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.06em;display:inline-flex;align-items:center;background:var(--raise);color:#B6BBC4}
 .tag.acc{background:var(--accent-tint);color:var(--accent)}
 .tag.amb{background:var(--amber-tint);color:var(--amber)}
@@ -164,8 +165,8 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .tile{background:var(--card);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:2px}
 .tile b{font-family:"Space Grotesk",Inter,system-ui,sans-serif;font-size:24px}
 .tile span{font-size:12px;color:var(--mute)}
-.lift{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;background:var(--card);width:100%;text-align:left}
-.lift .d{font-size:13px;font-weight:700;width:58px;text-align:right}
+.liftrow{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;background:var(--card);width:100%;text-align:left}
+.liftrow .d{font-size:13px;font-weight:700;width:58px;text-align:right}
 .chart{width:100%;display:block}
 .sec{margin-top:22px;margin-bottom:10px;padding:0 4px;display:flex;justify-content:space-between;align-items:baseline}
 
@@ -204,7 +205,6 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .day.on{background:var(--raise);box-shadow:inset 0 0 0 1.5px var(--accent)}
 .day .done{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:4px;background:var(--accent)}
 .weekhead{gap:6px}
-.day{padding:0 2px}
 /* roster: duty markers, auto suggestions, duty row and sheet */
 .dt{display:block;margin-top:1px;font-size:8px;font-weight:800;letter-spacing:.04em;line-height:1;padding:2px 3px;border-radius:4px;background:var(--amber-tint);color:var(--amber);max-width:100%;overflow:hidden;white-space:nowrap}
 .dt.stbh,.dt.stba{background:var(--raise);color:var(--soft)}
@@ -212,6 +212,7 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .tag.auto{background:transparent;box-shadow:inset 0 0 0 1px var(--line2);color:var(--soft)}
 .loc.duty{margin-bottom:8px;min-height:56px;padding:8px 12px}
 .duty .leave{color:var(--amber);font-weight:700}
+.dutylink{display:block;min-height:44px;margin:0 12px 4px;padding:0 8px;font-size:13px;color:var(--mute);text-align:left}
 .dchoice{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:4px}
 .dchoice button{min-height:44px;padding:0 6px;border-radius:12px;background:var(--raise);color:var(--soft);font-size:14px;font-weight:600}
 .dchoice button.on{background:var(--accent);color:var(--accent-ink)}

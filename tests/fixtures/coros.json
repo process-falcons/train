@@ -1,0 +1,17 @@
+{
+ "updated": "2030-01-07",
+ "ftp": 250,
+ "vo2max": 50,
+ "thresholdPace": "4:30",
+ "halfPrediction": "1:40:00",
+ "loadRatio": 1.0,
+ "loadComment": "Sample",
+ "shortLoad": 400,
+ "longLoad": 400,
+ "last7": {
+  "hours": 6.0,
+  "bikeHours": 4.5,
+  "strengthHours": 1.5,
+  "other": ""
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "updated": "2030-01-01",
+ "goal": "Sample goal",
+ "blockLength": 8,
+ "phases": [
+  {
+   "id": "base",
+   "name": "Base",
+   "start": "2029-12-31",
+   "end": "2030-02-24",
+   "summary": "Sample phase",
+   "detail": "Sample phase for tests."
+  }
+ ],
+ "events": [
+  {
+   "name": "Sample race",
+   "date": "2030-06-01",
+   "dateLabel": "1 Jun",
+   "kind": "A race"
+  }
+ ]
+}

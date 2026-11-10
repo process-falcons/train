@@ -1,0 +1,49 @@
+{
+ "current": "home",
+ "gyms": [
+  {
+   "id": "home",
+   "name": "Home gym",
+   "group": "home",
+   "equip": [
+    "dumbbells",
+    "bench",
+    "barbell",
+    "cable",
+    "lat_pulldown",
+    "leg_press",
+    "leg_curl",
+    "pullup_bar",
+    "kettlebell",
+    "box",
+    "calf_machine",
+    "hip_thrust",
+    "band",
+    "rack"
+   ],
+   "lastUsed": null
+  },
+  {
+   "id": "ord-hotel",
+   "name": "Sample hotel ORD",
+   "airport": "ORD",
+   "group": "hotel",
+   "equip": [
+    "dumbbells",
+    "bench",
+    "bike"
+   ],
+   "maxDB": 20,
+   "lastUsed": null
+  },
+  {
+   "id": "den-hotel",
+   "name": "Sample hotel DEN",
+   "airport": "DEN",
+   "group": "hotel",
+   "equip": [],
+   "unset": true,
+   "lastUsed": null
+  }
+ ]
+}

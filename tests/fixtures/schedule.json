@@ -1,0 +1,20 @@
+{
+ "updated": "2030-01-01",
+ "days": {
+  "2030-01-07": {
+   "sid": null,
+   "note": "Rest",
+   "other": "Easy spin"
+  },
+  "2030-01-08": {
+   "sid": "s1",
+   "note": "Gym day",
+   "other": null
+  },
+  "2030-01-10": {
+   "sid": "s2",
+   "note": null,
+   "other": null
+  }
+ }
+}

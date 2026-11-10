@@ -1,0 +1,55 @@
+{
+ "updated": "2030-01-01",
+ "note": "Sample roster for tests",
+ "days": {
+  "2030-01-08": {
+   "duty": "OFF"
+  },
+  "2030-01-09": {
+   "duty": "STBH",
+   "report": "05:00",
+   "off": "13:00"
+  },
+  "2030-01-11": {
+   "duty": "FLY",
+   "report": "05:45",
+   "off": "12:30",
+   "sectors": 2
+  },
+  "2030-01-12": {
+   "duty": "FLY",
+   "report": "09:30",
+   "off": "18:10",
+   "sectors": 1,
+   "nightstop": "ORD"
+  },
+  "2030-01-13": {
+   "duty": "LAYOVER",
+   "nightstop": "ORD"
+  },
+  "2030-01-14": {
+   "duty": "FLY",
+   "report": "17:30",
+   "off": "06:40",
+   "sectors": 1,
+   "overnight": true
+  },
+  "2030-01-15": {
+   "duty": "OFF"
+  },
+  "2030-01-16": {
+   "duty": "STBA",
+   "report": "04:30",
+   "off": "10:30"
+  },
+  "2030-01-17": {
+   "duty": "FLY",
+   "report": "10:20",
+   "off": "17:50",
+   "sectors": [
+    "ORD-DEN",
+    "DEN-ORD"
+   ]
+  }
+ }
+}

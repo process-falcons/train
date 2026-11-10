@@ -1,9 +1,9 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const DEV = /[?&]dev\b/.test(location.search);
-const DEV_BASE = '../train-data/';
+const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
 const DAY = 86400000;
 
@@ -163,14 +163,36 @@ function EX(id) {
   return (P().exercises[id]) || { name: id, type: 'load', equip: [[]], inc: 2.5 };
 }
 const gyms = () => S.data.gyms.gyms;
-function gym(id) { const g = S.data.gyms; return g.gyms.find((x) => x.id === (id || g.current)) || g.gyms[0]; }
+function gym(id) { const g = S.data.gyms; return g.gyms.find((x) => x.id === (id || hereId())) || g.gyms[0]; }
+/* where you are: on a layover day the roster's nightstop picks the hotel with that airport code, unless you chose a place yourself today */
+function rosterGymId(d) {
+  const r = S.data.roster && S.data.roster.days ? S.data.roster.days[ymd(d)] : null;
+  if (!r || r.duty !== 'LAYOVER' || !r.nightstop) return null;
+  const code = String(r.nightstop).trim().toUpperCase(), x = S.data.gyms.gyms.find((y) => !y.archived && (y.airport || '').toUpperCase() === code);
+  return x ? x.id : null;
+}
+const hereAuto = () => (LS.get('hereSet', null) === ymd(today0()) ? null : rosterGymId(today0()));
+const hereId = () => hereAuto() || S.data.gyms.current;
+const dayGym = (d) => (ymd(d) === ymd(today0()) ? gym() : gym(rosterGymId(d) || undefined));
 const hasEquip = (ex, g) => (ex.equip || [[]]).some((req) => req.every((e) => (g.equip || []).includes(e)));
 function missingFor(ex, g) { const req = (ex.equip || [[]])[0] || []; return req.filter((e) => !(g.equip || []).includes(e)).map((e) => EQ_NAME[e] || e); }
+/* dumbbell limit: the equipment option this gym uses for an exercise, and whether your last top weight is beyond its heaviest dumbbell */
+const usesDB = (ex, g) => { const req = (ex.equip || [[]]).find((r) => r.every((e) => (g.equip || []).includes(e))); return !!(req && req.includes('dumbbells')); };
+function overDB(id, g) {
+  if (!(g.maxDB > 0) || !usesDB(EX(id), g)) return false;
+  const last = lastFor(id); return !!last && Math.max(...last.sets.map((s) => s.kg || 0)) > g.maxDB;
+}
 function resolve(sid, item, g) {
   const key = sid + ':' + item.slot;
   const rem = g.swaps && g.swaps[key];
   if (rem && (rem.startsWith('custom:') || hasEquip(EX(rem), g))) return { ex: rem, swapped: rem !== item.ex[0], why: 'your choice here' };
-  for (const id of item.ex) if (hasEquip(EX(id), g)) return { ex: id, swapped: id !== item.ex[0], why: id !== item.ex[0] ? 'no ' + missingFor(EX(item.ex[0]), g).join(', ').toLowerCase() : '' };
+  const avail = item.ex.filter((id) => hasEquip(EX(id), g));
+  const fits = avail.find((id) => !overDB(id, g)) || avail[0];
+  if (fits) {
+    const skipped = item.ex.slice(0, item.ex.indexOf(fits));
+    const why = !skipped.length ? '' : skipped.some((id) => hasEquip(EX(id), g)) ? `dumbbells here only go to ${fmtNum(W(g.maxDB))} ${U()}` : 'no ' + missingFor(EX(item.ex[0]), g).join(', ').toLowerCase();
+    return { ex: fits, swapped: fits !== item.ex[0], why };
+  }
   const lastEx = item.ex[item.ex.length - 1];
   return { ex: lastEx, swapped: item.ex.length > 1, why: 'needs ' + missingFor(EX(lastEx), g).join(', ').toLowerCase() };
 }
@@ -251,7 +273,16 @@ function stats() {
 }
 function lastFor(exId) { for (const l of stats().logs) { const sets = l.sets.filter((s) => s.ex === exId).sort((a, b) => a.n - b.n); if (sets.length) return { log: l, sets }; } return null; }
 
-function prefill(item, exId) {
+function prefill(item, exId, g) {
+  const pf = prefillRaw(item, exId);
+  if (!g || !(g.maxDB > 0) || !usesDB(EX(exId), g)) return pf;
+  const want = Math.max(0, ...pf.sets.map((s) => s.kg || 0));
+  if (want <= g.maxDB) return pf;
+  pf.sets.forEach((s) => { if ((s.kg || 0) > g.maxDB) s.kg = g.maxDB; });
+  pf.tip = { kind: 'cap', exId, max: g.maxDB, want };
+  return pf;
+}
+function prefillRaw(item, exId) {
   const ex = EX(exId), last = lastFor(exId), n = item.sets;
   const lo = item.lo || 8, hi = item.hi || lo;
   const out = []; let tip = null, progress = false;
@@ -285,6 +316,7 @@ function tipHtml(t) {
   if (!t) return '';
   const ex = EX(t.exId);
   if (t.kind === 'first') return esc(ex.cue ? ex.cue + ' First time logged – start steady.' : (ex.type === 'load' || ex.type === 'carry' ? 'First time logged. Pick a weight that leaves 1–2 reps in reserve.' : 'First time logged.'));
+  if (t.kind === 'cap') return `Heaviest dumbbell here is ${fmtNum(W(t.max))} ${U()} (you'd go ${fmtNum(W(t.want))}). <b>Use ${fmtNum(W(t.max))} and add reps or slow the lowering.</b>`;
   if (t.kind === 'up') {
     if (['load', 'carry', 'bw'].includes(ex.type)) return `Hit ${t.hi} on every set last time. <b>Go to ${ex.type === 'bw' ? '+' : ''}${fmtNum(W(t.nextKg))} ${U()}${ex.perDB ? ' per dumbbell' : ''}.</b>`;
     return `Hit the top of the range last time. <b>Add a rep or ${ex.type === 'time' ? '5 s' : 'slow it down'}.</b>`;
@@ -407,7 +439,9 @@ function dutyTag(d) {
 }
 function dutyRow(d) {
   const r = rosterDay(d), k = ymd(d);
-  if (!r) return `<button class="loc duty" data-a="dutySheet" data-d="${k}">${ic('plane', 18, 2, 'style="color:var(--mute)"')}<span class="grow mute" style="font-size:14px">No duty on the roster · tap to add</span><span class="mute">${ic('edit', 16)}</span></button>`;
+  // no roster entry: nothing to show or ask. A day off is already in the schedule note, so only a quiet way to record a call-out
+  if (!r) return '';
+  if (r.duty === 'OFF') return `<button class="dutylink" data-a="dutySheet" data-d="${k}">Duty changed?</button>`;
   let main = DUTY[r.duty] || r.duty;
   if (r.duty === 'LAYOVER' && r.nightstop) main += ' · ' + r.nightstop;
   const standby = r.duty === 'STBH' || r.duty === 'STBA';
@@ -461,20 +495,20 @@ function vToday() {
     const a = S.active, done = a.items.reduce((n, it) => n + it.sets.filter((s) => s.done).length, 0);
     h += `<button class="card pad row" data-a="resume" style="border:1px solid var(--accent);text-align:left"><div class="grow"><div class="label acc">In progress · ${fmtTime((Date.now() - a.start) / 1000)}</div><div style="font-size:18px;font-weight:700;margin-top:4px">${esc(a.name)}</div><div class="small mute">${done} sets logged · ${esc(a.gymName)}</div></div><span class="btn sm" style="width:auto;padding:0 18px">Resume</span></button>`;
   }
-  const here = gym();
-  h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
+  const here = gym(), auto = !!hereAuto();
+  h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : auto ? '<span class="small" style="color:var(--amber)">· layover</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
   h += weekStrip(t0, sel);
 
-  const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: ap.why } : null);
+  const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: 'Suggested from your roster: ' + ap.why.charAt(0).toLowerCase() + ap.why.slice(1) } : null);
   const planned = sd0 ? sd0.sid : ap ? ap.sid : (isToday ? nextSessionId() : null);
   const sid = S.pick || planned;
   const doneLogs = loggedOn(sel);
-  const g = gym();
+  const g = dayGym(sel);
   const extra = sd && (sd.note || sd.other) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${sd.other ? `<span class="mute">Also: ${esc(sd.other)}</span>` : ''}</div>` : '';
 
   if (!sid) {
     h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ap ? '<span class="tag auto">AUTO</span>' : ''}${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>${ap && ap.rest ? 'Rest day' : 'No lifting planned'}</h2>${extra}</div>
-      ${dutyRow(sel)}<div style="height:12px"></div>
+      ${dutyRow(sel)}<div style="height:8px"></div>
       ${doneLogs.length ? `<div style="padding:0 20px 16px" class="small acc">Logged: ${doneLogs.map((l) => esc(l.name)).join(', ')}</div>` : ''}</div>`;
   } else {
     const s = session(sid);
@@ -527,7 +561,7 @@ function startSession(sid) {
   const items = [];
   s.blocks.forEach((b, bi) => b.items.forEach((it) => {
     const r = resolve(sid, it, g);
-    const pf = prefill(it, r.ex);
+    const pf = prefill(it, r.ex, g);
     items.push({ slot: it.slot, block: b.key, bi, circuit: !!b.circuit, power: !!b.power, optional: !!b.optional, opts: it.ex, ex: r.ex, orig: it.ex[0], swapped: r.swapped, why: r.why, target: it.target, lo: it.lo, hi: it.hi, tip: pf.tip, lastSets: pf.last || null, sets: pf.sets.map((p) => ({ ...p, done: false })) });
   }));
   S.active = { id: uid(), sid, name: s.name, label: s.label, gymId: g.id, gymName: g.name, start: Date.now(), items, steps: buildSteps(items), cur: 0, rest: null };
@@ -691,7 +725,7 @@ function doSwap(ii, exId) {
   const a = S.active, it = a.items[ii], g = gym(a.gymId);
   const doneCount = it.sets.filter((s) => s.done).length;
   if (doneCount && exId !== it.ex) { toast('Sets already logged stay as ' + EX(it.ex).name); }
-  const pf = prefill({ sets: it.sets.length, lo: it.lo, hi: it.hi }, exId);
+  const pf = prefill({ sets: it.sets.length, lo: it.lo, hi: it.hi }, exId, g);
   it.sets = it.sets.map((s, k) => (s.done ? s : { ...pf.sets[k], done: false }));
   it.ex = exId; it.tip = pf.tip; it.lastSets = pf.last; it.swapped = exId !== it.orig; it.why = it.swapped ? 'your choice' : '';
   if (S.remember !== false) {
@@ -834,7 +868,7 @@ function vProgress() {
   // lifts
   h += `<div class="chips"><button class="pill ${S.progFilter === 'main' ? 'on' : ''}" data-a="progFilter" data-f="main">Main lifts</button><button class="pill ${S.progFilter === 'all' ? 'on' : ''}" data-a="progFilter" data-f="all">All</button><button class="pill ${S.progFilter === 'hist' ? 'on' : ''}" data-a="progFilter" data-f="hist">History</button></div>`;
   if (S.progFilter === 'hist') {
-    h += logs.length ? logs.slice(0, 40).map((l) => `<button class="lift" data-a="logSheet" data-id="${esc(l.id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(l.name)}</span><span class="small mute">${DOW[new Date(l.start).getDay()].slice(0, 3)} ${shortDate(l.start)} · ${esc(l.gymName || '')} · ${l.minutes} min${l.rpe ? ' · RPE ' + l.rpe : ''}</span></span><span class="small mute">${l.sets.length} sets</span>${l.sets.some((s) => s.pr) ? '<span class="pr">PR</span>' : ''}</button>`).join('') : `<div class="empty">No sessions yet. Your first one will show up here.</div>`;
+    h += logs.length ? logs.slice(0, 40).map((l) => `<button class="liftrow" data-a="logSheet" data-id="${esc(l.id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(l.name)}</span><span class="small mute">${DOW[new Date(l.start).getDay()].slice(0, 3)} ${shortDate(l.start)} · ${esc(l.gymName || '')} · ${l.minutes} min${l.rpe ? ' · RPE ' + l.rpe : ''}</span></span><span class="small mute">${l.sets.length} sets</span>${l.sets.some((s) => s.pr) ? '<span class="pr">PR</span>' : ''}</button>`).join('') : `<div class="empty">No sessions yet. Your first one will show up here.</div>`;
   } else {
     const ids = Object.keys(st.byEx).filter((id) => S.progFilter === 'all' || EX(id).main).sort((a, b) => st.byEx[b].length - st.byEx[a].length);
     if (!ids.length) h += `<div class="empty">${logs.length ? 'No main lifts logged yet.' : 'Log a session and your lifts will appear here with trends and PRs.'}</div>`;
@@ -847,7 +881,7 @@ function vProgress() {
       const dv = (lastH.e1 && first.e1) ? lastH.e1 - first.e1 : lastH.score - first.score;
       const dTxt = arr.length < 2 ? 'New' : Math.abs(dv) < 0.5 ? 'Steady' : (dv > 0 ? '+' : '') + fmtNum(ex.type === 'carry' ? W(dv / Math.max(1, lastH.best.m || 1)) : (ex.type === 'time' || ex.type === 'reps') ? dv : W(dv)) + (ex.type === 'carry' ? ' ' + U() : unit);
       const col = arr.length < 2 || Math.abs(dv) < 0.5 ? 'var(--mute)' : dv > 0 ? 'var(--accent)' : 'var(--amber)';
-      h += `<button class="lift" data-a="liftSheet" data-x="${esc(id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(ex.name)}</span><span class="small mute">Best ${esc(setText(id, bestH.best))}${bestH.e1 ? ' · e1RM ' + Math.round(W(bestH.e1)) : ''}</span></span>${spark(vals, 64, 28, arr.length < 2 || Math.abs(dv) < 0.5 ? '#8B919C' : 'var(--accent)')}<span class="d" style="color:${col}">${dTxt}</span></button>`;
+      h += `<button class="liftrow" data-a="liftSheet" data-x="${esc(id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(ex.name)}</span><span class="small mute">Best ${esc(setText(id, bestH.best))}${bestH.e1 ? ' · e1RM ' + Math.round(W(bestH.e1)) : ''}</span></span>${spark(vals, 64, 28, arr.length < 2 || Math.abs(dv) < 0.5 ? '#8B919C' : 'var(--accent)')}<span class="d" style="color:${col}">${dTxt}</span></button>`;
     }
   }
   h += `</div></div>`;
@@ -895,7 +929,7 @@ function vPlan() {
   });
   h += `<div class="tl"><div class="rail"><span style="margin-top:14px;color:var(--amber)">${ic('flag', 18, 2)}</span></div><div class="phase" style="outline:1px solid var(--amber)"><div class="row" style="justify-content:space-between"><span style="font-size:15px;font-weight:700">${esc(plan.goal.name)}</span><span class="small amb" style="font-weight:700">${esc(plan.goal.dateLabel)}</span></div></div></div>`;
   const others = (plan.events || []).filter((e) => e.name !== plan.goal.name);
-  if (others.length) h += `<div class="sec"><span class="label">Other events</span></div>` + others.map((e) => `<div class="lift" style="margin-bottom:8px"><span class="grow"><span style="display:block;font-weight:600">${esc(e.name)}</span><span class="small mute">${esc(e.dateLabel || e.date || '')}</span></span><span class="tag">${esc(e.kind || '')}</span></div>`).join('');
+  if (others.length) h += `<div class="sec"><span class="label">Other events</span></div>` + others.map((e) => `<div class="liftrow" style="margin-bottom:8px"><span class="grow"><span style="display:block;font-weight:600">${esc(e.name)}</span><span class="small mute">${esc(e.dateLabel || e.date || '')}</span></span><span class="tag">${esc(e.kind || '')}</span></div>`).join('');
   h += `<div class="sec"><span class="label">From COROS</span><span class="small mute">updated ${c.updated ? shortDate(c.updated) : '–'}</span></div>
     <div class="card pad"><div class="coros">
       <div><b>${c.ftp ? c.ftp + ' W' : '–'}</b><span>FTP</span></div>
@@ -911,7 +945,7 @@ function vPlan() {
 
 /* ---------- view: gyms ---------- */
 function vGyms() {
-  const g = S.data.gyms, cur = g.current;
+  const g = S.data.gyms, cur = gym().id;
   const card = (x) => `<div class="row" style="gap:8px;margin-bottom:8px"><button class="opt ${x.id === cur ? 'best' : ''}" data-a="setGym" data-g="${esc(x.id)}" style="margin:0;flex:1;${x.unset ? 'border-style:dashed' : ''}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(x.name)}${x.airport ? ` <span class="mute" style="font-weight:500">· ${esc(x.airport)}</span>` : ''}</span><span class="small ${x.unset ? 'amb' : 'mute'}">${x.unset ? 'Not set up yet · tap the pencil to tick its equipment' : esc((x.equip || []).slice(0, 6).map((e) => EQ_NAME[e] || e).join(' · ')) + ((x.equip || []).length > 6 ? ` +${x.equip.length - 6}` : '')}${x.lastUsed ? ' · used ' + shortDate(x.lastUsed) : ''}</span></span>${x.id === cur ? '<span class="small acc" style="font-weight:700">Here</span>' : ''}</button><button class="iconbtn" data-a="editGym" data-g="${esc(x.id)}" aria-label="Edit ${esc(x.name)}">${ic('edit', 18)}</button></div>`;
   const home = g.gyms.filter((x) => x.group === 'home' && !x.archived), hotels = g.gyms.filter((x) => x.group !== 'home' && !x.archived).sort((a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
   return `<div class="view"><div class="shead" style="margin-bottom:10px"><button class="iconbtn" data-a="back" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Where are you training?</b></div></div>
@@ -1048,8 +1082,8 @@ const A = {
   logSheet(d) { openSheet('log', d.id); },
   bodySheet() { openSheet('body'); },
   saveBody() { const v = toKg(parseFloat(($('#bodyKg') || {}).value)); if (!(v > 30 && v < 250)) { toast('Enter your weight in ' + U()); return; } const b = S.data.body = S.data.body || { entries: [] }; const t = ymd(new Date()); b.entries = b.entries.filter((e) => e.date !== t); b.entries.push({ date: t, kg: Math.round(v * 10) / 10 }); save('data'); invalidate(); enqueue({ kind: 'file', name: 'body', data: b }); closeSheet(); render(); toast('Weight saved'); },
-  setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.stack = []; S.view = 'today'; render(); },
-  setGymHere(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
+  setGym(d) { S.data.gyms.current = d.g; LS.set('hereSet', ymd(today0())); save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.stack = []; S.view = 'today'; render(); },
+  setGymHere(d) { S.data.gyms.current = d.g; LS.set('hereSet', ymd(today0())); save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
   dutySheet(d) { S.dutyDraft = null; openSheet('duty', d.d); },
   dutySet(d) {

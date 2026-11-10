@@ -1,0 +1,681 @@
+{
+ "version": 1,
+ "updated": "2030-01-01",
+ "defaults": {
+  "restSec": 90,
+  "powerRestSec": 75
+ },
+ "exercises": {
+  "kb_swing": {
+   "name": "Kettlebell swing",
+   "type": "load",
+   "equip": [
+    [
+     "kettlebell"
+    ]
+   ],
+   "pattern": "power",
+   "inc": 4,
+   "power": true,
+   "cue": "Snap the hips."
+  },
+  "box_jump": {
+   "name": "Box jump",
+   "type": "reps",
+   "equip": [
+    [
+     "box"
+    ]
+   ],
+   "pattern": "power",
+   "power": true
+  },
+  "leg_press": {
+   "name": "Leg press",
+   "type": "load",
+   "equip": [
+    [
+     "leg_press"
+    ]
+   ],
+   "pattern": "squat",
+   "inc": 10,
+   "main": true
+  },
+  "goblet_squat": {
+   "name": "Goblet squat",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells"
+    ],
+    [
+     "kettlebell"
+    ]
+   ],
+   "pattern": "squat",
+   "inc": 2
+  },
+  "split_squat": {
+   "name": "Split squat",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells"
+    ]
+   ],
+   "pattern": "squat",
+   "inc": 2,
+   "perDB": true,
+   "perSide": true
+  },
+  "rdl": {
+   "name": "Romanian deadlift",
+   "type": "load",
+   "equip": [
+    [
+     "barbell"
+    ]
+   ],
+   "pattern": "hinge",
+   "inc": 5,
+   "main": true
+  },
+  "db_rdl": {
+   "name": "DB Romanian deadlift",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells"
+    ]
+   ],
+   "pattern": "hinge",
+   "inc": 2,
+   "perDB": true
+  },
+  "hip_thrust": {
+   "name": "Hip thrust",
+   "type": "load",
+   "equip": [
+    [
+     "hip_thrust"
+    ],
+    [
+     "barbell",
+     "bench"
+    ]
+   ],
+   "pattern": "glute",
+   "inc": 5
+  },
+  "glute_bridge": {
+   "name": "Glute bridge",
+   "type": "reps",
+   "equip": [
+    []
+   ],
+   "pattern": "glute"
+  },
+  "leg_curl": {
+   "name": "Leg curl",
+   "type": "load",
+   "equip": [
+    [
+     "leg_curl"
+    ]
+   ],
+   "pattern": "hamstring",
+   "inc": 5
+  },
+  "db_bench": {
+   "name": "DB bench press",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells",
+     "bench"
+    ]
+   ],
+   "pattern": "hpush",
+   "inc": 2,
+   "perDB": true,
+   "main": true
+  },
+  "pushup": {
+   "name": "Push-up",
+   "type": "reps",
+   "equip": [
+    []
+   ],
+   "pattern": "hpush"
+  },
+  "db_row": {
+   "name": "One-arm DB row",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells",
+     "bench"
+    ]
+   ],
+   "pattern": "hpull",
+   "inc": 2,
+   "perDB": true,
+   "perSide": true
+  },
+  "cable_row": {
+   "name": "Cable row",
+   "type": "load",
+   "equip": [
+    [
+     "cable"
+    ]
+   ],
+   "pattern": "hpull",
+   "inc": 5
+  },
+  "pullup": {
+   "name": "Pull-up",
+   "type": "bw",
+   "equip": [
+    [
+     "pullup_bar"
+    ]
+   ],
+   "pattern": "vpull",
+   "inc": 2.5,
+   "main": true
+  },
+  "lat_pulldown": {
+   "name": "Lat pulldown",
+   "type": "load",
+   "equip": [
+    [
+     "lat_pulldown"
+    ]
+   ],
+   "pattern": "vpull",
+   "inc": 5
+  },
+  "db_press": {
+   "name": "DB shoulder press",
+   "type": "load",
+   "equip": [
+    [
+     "dumbbells"
+    ]
+   ],
+   "pattern": "vpush",
+   "inc": 2,
+   "perDB": true
+  },
+  "face_pull": {
+   "name": "Face pull",
+   "type": "load",
+   "equip": [
+    [
+     "cable"
+    ]
+   ],
+   "pattern": "reardelt",
+   "inc": 2.5
+  },
+  "band_pull_apart": {
+   "name": "Band pull-apart",
+   "type": "reps",
+   "equip": [
+    [
+     "band"
+    ]
+   ],
+   "pattern": "reardelt"
+  },
+  "plank": {
+   "name": "Plank",
+   "type": "time",
+   "equip": [
+    []
+   ],
+   "pattern": "core"
+  },
+  "side_plank": {
+   "name": "Side plank",
+   "type": "time",
+   "equip": [
+    []
+   ],
+   "pattern": "core",
+   "perSide": true
+  },
+  "pallof": {
+   "name": "Pallof press",
+   "type": "load",
+   "equip": [
+    [
+     "cable"
+    ]
+   ],
+   "pattern": "antirot",
+   "inc": 2.5,
+   "perSide": true
+  },
+  "dead_bug": {
+   "name": "Dead bug",
+   "type": "reps",
+   "equip": [
+    []
+   ],
+   "pattern": "antirot",
+   "perSide": true
+  },
+  "calf_raise": {
+   "name": "Calf raise",
+   "type": "load",
+   "equip": [
+    [
+     "calf_machine"
+    ],
+    [
+     "dumbbells"
+    ]
+   ],
+   "pattern": "calf",
+   "inc": 5
+  },
+  "farmer_carry": {
+   "name": "Farmer's carry",
+   "type": "carry",
+   "equip": [
+    [
+     "dumbbells"
+    ],
+    [
+     "kettlebell"
+    ]
+   ],
+   "pattern": "carry",
+   "inc": 2,
+   "perDB": true
+  }
+ },
+ "sessions": [
+  {
+   "id": "s1",
+   "name": "Lower + pull",
+   "label": "Session 1",
+   "minutes": 45,
+   "blocks": [
+    {
+     "key": "PWR",
+     "power": true,
+     "items": [
+      {
+       "slot": "PWR",
+       "ex": [
+        "kb_swing"
+       ],
+       "sets": 3,
+       "target": "8–10",
+       "lo": 8,
+       "hi": 10
+      }
+     ]
+    },
+    {
+     "key": "A",
+     "items": [
+      {
+       "slot": "A1",
+       "ex": [
+        "leg_press",
+        "goblet_squat",
+        "split_squat"
+       ],
+       "sets": 4,
+       "target": "6–10",
+       "lo": 6,
+       "hi": 10
+      },
+      {
+       "slot": "A2",
+       "ex": [
+        "pallof",
+        "dead_bug"
+       ],
+       "sets": 3,
+       "target": "10/side",
+       "lo": 10,
+       "hi": 12
+      }
+     ]
+    },
+    {
+     "key": "B",
+     "items": [
+      {
+       "slot": "B1",
+       "ex": [
+        "rdl",
+        "db_rdl"
+       ],
+       "sets": 3,
+       "target": "8",
+       "lo": 8,
+       "hi": 8
+      },
+      {
+       "slot": "B2",
+       "ex": [
+        "pullup",
+        "lat_pulldown"
+       ],
+       "sets": 3,
+       "target": "5–8",
+       "lo": 5,
+       "hi": 8
+      }
+     ]
+    },
+    {
+     "key": "FIN",
+     "items": [
+      {
+       "slot": "FIN",
+       "ex": [
+        "farmer_carry"
+       ],
+       "sets": 2,
+       "target": "30 m",
+       "lo": 30,
+       "hi": 40
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "s2",
+   "name": "Upper + hips",
+   "label": "Session 2",
+   "minutes": 45,
+   "blocks": [
+    {
+     "key": "PWR",
+     "power": true,
+     "items": [
+      {
+       "slot": "PWR",
+       "ex": [
+        "box_jump"
+       ],
+       "sets": 3,
+       "target": "3–5",
+       "lo": 3,
+       "hi": 5
+      }
+     ]
+    },
+    {
+     "key": "A",
+     "items": [
+      {
+       "slot": "A1",
+       "ex": [
+        "db_bench",
+        "pushup"
+       ],
+       "sets": 3,
+       "target": "6–10",
+       "lo": 6,
+       "hi": 10
+      },
+      {
+       "slot": "A2",
+       "ex": [
+        "cable_row",
+        "db_row"
+       ],
+       "sets": 3,
+       "target": "10",
+       "lo": 10,
+       "hi": 12
+      }
+     ]
+    },
+    {
+     "key": "B",
+     "items": [
+      {
+       "slot": "B1",
+       "ex": [
+        "db_press"
+       ],
+       "sets": 3,
+       "target": "8–10",
+       "lo": 8,
+       "hi": 10
+      },
+      {
+       "slot": "B2",
+       "ex": [
+        "hip_thrust",
+        "glute_bridge"
+       ],
+       "sets": 3,
+       "target": "10",
+       "lo": 10,
+       "hi": 12
+      }
+     ]
+    },
+    {
+     "key": "C",
+     "items": [
+      {
+       "slot": "C",
+       "ex": [
+        "plank"
+       ],
+       "sets": 2,
+       "target": "30 s",
+       "lo": 30,
+       "hi": 45
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "s3",
+   "name": "Single-leg + mixed",
+   "label": "Session 3",
+   "minutes": 50,
+   "blocks": [
+    {
+     "key": "A",
+     "items": [
+      {
+       "slot": "A1",
+       "ex": [
+        "split_squat",
+        "goblet_squat"
+       ],
+       "sets": 3,
+       "target": "8/leg",
+       "lo": 8,
+       "hi": 10
+      },
+      {
+       "slot": "A2",
+       "ex": [
+        "pullup",
+        "db_row"
+       ],
+       "sets": 3,
+       "target": "5–8",
+       "lo": 5,
+       "hi": 8
+      }
+     ]
+    },
+    {
+     "key": "B",
+     "items": [
+      {
+       "slot": "B",
+       "ex": [
+        "db_bench",
+        "pushup"
+       ],
+       "sets": 3,
+       "target": "8–10",
+       "lo": 8,
+       "hi": 10
+      }
+     ]
+    },
+    {
+     "key": "C",
+     "circuit": true,
+     "items": [
+      {
+       "slot": "C1",
+       "ex": [
+        "calf_raise"
+       ],
+       "sets": 2,
+       "target": "12",
+       "lo": 12,
+       "hi": 15
+      },
+      {
+       "slot": "C2",
+       "ex": [
+        "side_plank"
+       ],
+       "sets": 2,
+       "target": "30 s",
+       "lo": 30,
+       "hi": 45
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "hotel",
+   "name": "Hotel – no gym",
+   "label": "Hotel",
+   "minutes": 30,
+   "blocks": [
+    {
+     "key": "A",
+     "items": [
+      {
+       "slot": "A1",
+       "ex": [
+        "split_squat",
+        "glute_bridge"
+       ],
+       "sets": 3,
+       "target": "10/leg",
+       "lo": 10,
+       "hi": 12
+      },
+      {
+       "slot": "A2",
+       "ex": [
+        "db_row",
+        "pushup"
+       ],
+       "sets": 3,
+       "target": "10",
+       "lo": 10,
+       "hi": 12
+      }
+     ]
+    },
+    {
+     "key": "B",
+     "items": [
+      {
+       "slot": "B",
+       "ex": [
+        "plank"
+       ],
+       "sets": 2,
+       "target": "30 s",
+       "lo": 30,
+       "hi": 45
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "snack",
+   "name": "Strength snack",
+   "label": "Snack",
+   "minutes": 10,
+   "blocks": [
+    {
+     "key": "A",
+     "items": [
+      {
+       "slot": "A1",
+       "ex": [
+        "pushup"
+       ],
+       "sets": 3,
+       "target": "10",
+       "lo": 10,
+       "hi": 20
+      },
+      {
+       "slot": "A2",
+       "ex": [
+        "db_row",
+        "band_pull_apart"
+       ],
+       "sets": 2,
+       "target": "10/arm",
+       "lo": 10,
+       "hi": 12
+      },
+      {
+       "slot": "A3",
+       "ex": [
+        "side_plank"
+       ],
+       "sets": 2,
+       "target": "30 s",
+       "lo": 30,
+       "hi": 45
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "rotation": [
+  "s1",
+  "s2",
+  "s3"
+ ],
+ "patterns": {
+  "power": "Power",
+  "squat": "Squat & lunge",
+  "hinge": "Hinge",
+  "glute": "Glutes",
+  "hamstring": "Hamstrings",
+  "hpush": "Horizontal push",
+  "hpull": "Horizontal pull",
+  "vpush": "Vertical push",
+  "vpull": "Vertical pull",
+  "reardelt": "Rear delts",
+  "core": "Core",
+  "antirot": "Anti-rotation",
+  "calf": "Calves",
+  "carry": "Carries"
+ }
+}
