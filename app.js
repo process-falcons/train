@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -30,6 +30,7 @@ const stepU = (incKg) => (U() === 'lb' ? lbStep(incKg) : incKg);
 function fmtVol(v) { if (U() === 'lb') { const w = v * LB; return w >= 10000 ? (w / 1000).toFixed(1) + 'k lb' : Math.round(w) + ' lb'; } return v >= 1000 ? fmtNum(v / 1000) + ' t' : Math.round(v) + ' kg'; }
 const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const shortDate = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MON[d.getMonth()]}`; };
 const ago = (ts) => { if (!ts) return 'never'; const m = Math.round((Date.now() - ts) / 60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; const h = Math.round(m / 60); if (h < 24) return h + ' h ago'; return Math.round(h / 24) + ' d ago'; };
 function b64enc(s) { const b = new TextEncoder().encode(s); let bin = ''; for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]); return btoa(bin); }
@@ -42,6 +43,7 @@ const I = {
   today: '<path d="M6.5 6.5h11M6.5 17.5h11M3 9v6M21 9v6M6.5 6.5v11M17.5 6.5v11"/>', progress: '<path d="M4 19l5-6 4 3 7-9"/>',
   plan: '<path d="M8 3v18M4 7h8M16 3v18M12 15h8"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
   cloud: '<path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.5 13 3.5 3.5 0 0 0 6 19z"/>',
 };
@@ -60,7 +62,7 @@ const S = {
   active: LS.get('active', null),
   lastSync: LS.get('lastSync', null),
   syncErr: null, syncing: false,
-  view: 'today', pick: null, gen: LS.get('gen', null), progFilter: 'main', editing: null, sheet: null, cache: null,
+  view: 'today', pick: null, gen: LS.get('gen', null), cal: LS.get('cal', 'week'), progFilter: 'main', editing: null, sheet: null, cache: null,
 };
 function save(...keys) { for (const k of keys) LS.set(k, S[k]); }
 const configured = () => DEV || (S.cfg.owner && S.cfg.repo && S.cfg.token);
@@ -341,7 +343,7 @@ function render() {
   if (v === S.shown && app.firstElementChild) app.firstElementChild.classList.add('still');
   S.shown = v;
   renderNav(); renderRest();
-  if (S.follow) { S.follow = false; if (v === 'session') requestAnimationFrame(followCur); }
+  if (S.follow) { const jump = S.follow === 'jump'; S.follow = false; if (v === 'session') requestAnimationFrame(() => followCur(jump)); }
 }
 function renderNav() {
   const nav = $('#nav');
@@ -365,14 +367,30 @@ const unitSeg = () => `<div class="seg" role="group" aria-label="Weight unit"><b
 const SHORT = { s1: 'S1', s2: 'S2', s3: 'S3', hotel: 'Hotel', snack: 'Snack' };
 function schedDay(d) { const s = S.data.schedule; return s && s.days ? s.days[ymd(d)] || null : null; }
 function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
+const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
+const calBtn = () => `<button class="iconbtn sm calbtn ${S.cal === 'month' ? 'on' : ''}" data-a="calMode" aria-label="${S.cal === 'month' ? 'Show one week' : 'Show the whole month'}" aria-pressed="${S.cal === 'month'}">${ic('cal', 16)}</button>`;
 function weekStrip(t0, sel) {
+  if (S.cal === 'month') return monthGrid(t0, sel);
   const ws = weekStart(t0); ws.setDate(ws.getDate() + 7 * (S.weekOff || 0));
-  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span><button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button></div><div class="week">`;
+  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span><button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button>${calBtn()}</div><div class="week">`;
   for (let i = 0; i < 7; i++) {
     const d = new Date(ws); d.setDate(ws.getDate() + i);
     const sd = schedDay(d), done = loggedOn(d).length, k = ymd(d);
-    const lbl = sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
-    h += `<button class="day ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}"><span class="dl">${DOW[d.getDay()][0]}</span><span class="dn">${d.getDate()}</span><span class="lb">${lbl}</span>${done ? '<i class="done"></i>' : ''}</button>`;
+    h += `<button class="day ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}"><span class="dl">${DOW[d.getDay()][0]}</span><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${done ? '<i class="done"></i>' : ''}</button>`;
+  }
+  return h + '</div>';
+}
+/* month calendar: Monday-first grid of the whole month, same labels and tap-to-select as the week strip */
+function monthGrid(t0, sel) {
+  const m0 = new Date(t0.getFullYear(), t0.getMonth() + (S.monthOff || 0), 1);
+  const gs = weekStart(m0), end = new Date(m0.getFullYear(), m0.getMonth() + 1, 0);
+  const weeks = Math.ceil((end - gs + DAY) / (7 * DAY));
+  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="monthNav" data-d="-1" aria-label="Previous month">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.monthOff ? '' : 'This month · '}${MONTH[m0.getMonth()]} ${m0.getFullYear()}</span><button class="iconbtn sm" data-a="monthNav" data-d="1" aria-label="Next month">${ic('chev', 16)}</button>${calBtn()}</div>
+    <div class="month">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span class="mdow">${x}</span>`).join('')}`;
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = new Date(gs); d.setDate(gs.getDate() + i);
+    const sd = schedDay(d), done = loggedOn(d).length, k = ymd(d), out = d.getMonth() !== m0.getMonth();
+    h += `<button class="mday ${out ? 'out' : ''} ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}" aria-label="${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}${sd ? ' · ' + dayLabel(sd) : ''}${done ? ' · logged' : ''}"><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${done ? '<i class="done"></i>' : ''}</button>`;
   }
   return h + '</div>';
 }
@@ -389,6 +407,8 @@ function vToday() {
     const a = S.active, done = a.items.reduce((n, it) => n + it.sets.filter((s) => s.done).length, 0);
     h += `<button class="card pad row" data-a="resume" style="border:1px solid var(--accent);text-align:left"><div class="grow"><div class="label acc">In progress · ${fmtTime((Date.now() - a.start) / 1000)}</div><div style="font-size:18px;font-weight:700;margin-top:4px">${esc(a.name)}</div><div class="small mute">${done} sets logged · ${esc(a.gymName)}</div></div><span class="btn sm" style="width:auto;padding:0 18px">Resume</span></button>`;
   }
+  const here = gym();
+  h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
   h += weekStrip(t0, sel);
 
   const sd = schedDay(sel);
@@ -527,14 +547,14 @@ function exCard(a, it, ii, ci, cr) {
 }
 
 /* after logging or skipping, bring the next set's editor into view (with its exercise name if it fits) */
-function followCur() {
+function followCur(jump) {
   const ed = document.querySelector('.excard.cur .editor'); if (!ed) return;
   const card = ed.closest('.excard'), r = ed.getBoundingClientRect(), c = card.getBoundingClientRect();
   const minTop = 64, maxBottom = window.innerHeight - 130;
   if (r.top >= minTop && r.bottom <= maxBottom) return;
   let d = c.top - minTop;
   if (r.bottom - d > maxBottom) d = r.bottom - maxBottom;
-  window.scrollBy({ top: d, behavior: 'smooth' });
+  window.scrollBy({ top: d, behavior: jump ? 'auto' : 'smooth' });
 }
 
 function editor(it, ii, r, was) {
@@ -843,6 +863,13 @@ function vGyms() {
     <div class="label" style="margin:18px 4px 8px">Layover hotels</div>${hotels.map(card).join('') || '<div class="empty">No hotels yet.</div>'}
     <button class="btn ghost sm" data-a="editGym" data-g="" style="margin-top:6px;color:var(--accent)">${ic('plus', 18)} Add a gym or hotel</button></div>`;
 }
+const gymUnitSeg = () => `<span class="seg" role="group" aria-label="Weight unit"><button data-a="gymUnit" data-u="kg" class="${U() === 'kg' ? 'on' : ''}">kg</button><button data-a="gymUnit" data-u="lb" class="${U() === 'lb' ? 'on' : ''}">lb</button></span>`;
+/* the dumbbell field shows the current unit; an untouched value keeps its stored kg so it never drifts through rounding */
+function gymMaxKg(d) {
+  const el = $('#gMax'); if (!el) return d.maxDB ?? null;
+  const raw = el.value.trim(); if (raw === el.dataset.orig) return d.maxDB ?? null;
+  const v = parseFloat(raw.replace(',', '.')); return isNaN(v) ? null : toKg(v);
+}
 function vGymSheet(id) {
   const x = id ? gym(id) : { id: '', name: '', airport: '', group: 'hotel', equip: ['dumbbells', 'bench'] };
   S.gymDraft = S.gymDraft && S.gymDraft._for === id ? S.gymDraft : { ...x, equip: [...(x.equip || [])], _for: id };
@@ -852,7 +879,7 @@ function vGymSheet(id) {
     <div class="row" style="gap:10px"><label class="field grow">Airport code<input id="gAirport" value="${esc(d.airport || '')}" maxlength="4" placeholder="ORD" style="text-transform:uppercase"></label>
     <label class="field grow">Type<select id="gGroup"><option value="hotel" ${d.group !== 'home' ? 'selected' : ''}>Layover hotel</option><option value="home" ${d.group === 'home' ? 'selected' : ''}>Home base</option></select></label></div>
     <div class="field">Equipment – tick what it has<div class="wrapchips" style="margin-top:4px">${EQUIP.map(([k, l]) => `<button class="chip ${d.equip.includes(k) ? 'on' : ''}" data-a="toggleEq" data-e="${k}">${l}</button>`).join('')}</div></div>
-    <label class="field">Heaviest dumbbell (kg, optional)<input id="gMax" inputmode="decimal" value="${d.maxDB ?? ''}"></label>
+    <div class="field"><span class="row" style="justify-content:space-between">Heaviest dumbbell (optional)${gymUnitSeg()}</span><span class="row" style="gap:10px"><input id="gMax" inputmode="decimal" value="${d.maxDB == null ? '' : fmtNum(W(d.maxDB))}" data-orig="${d.maxDB == null ? '' : fmtNum(W(d.maxDB))}" aria-label="Heaviest dumbbell in ${U()}" style="flex:1"><span class="mute" style="width:44px">${U() === 'lb' ? 'lb' : 'kg'}</span></span></div>
     <button class="btn" data-a="saveGym">Save</button>
     ${id ? `<button class="btn danger sm" data-a="archiveGym" data-g="${esc(id)}" style="margin-top:10px">Archive (hotel changed)</button>` : ''}`;
 }
@@ -898,10 +925,17 @@ const A = {
   pick(d) { S.pick = d.s || null; render(); },
   choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
   genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
-  selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; render(); },
+  selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(parseD(d.d)) - weekStart(today0())) / (7 * DAY)); render(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
+  monthNav(d) { S.monthOff = (S.monthOff || 0) + +d.d; render(); },
+  calMode() {
+    S.cal = S.cal === 'month' ? 'week' : 'month'; LS.set('cal', S.cal);
+    const sel = S.selDay ? parseD(S.selDay) : today0(), t = today0();
+    S.monthOff = (sel.getFullYear() - t.getFullYear()) * 12 + sel.getMonth() - t.getMonth();
+    render();
+  },
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
-  resume() { S.view = 'session'; unlockAudio(); wake(); toTop(); S.follow = true; render(); },
+  resume() { S.view = 'session'; unlockAudio(); wake(); toTop(); S.follow = 'jump'; render(); },
   sync() { sync(true); },
   step(d) { const s = S.active.items[+d.i].sets[+d.r]; const f = d.f, delta = parseFloat(d.d); if (f === 'kg') { const cur = W(s.kg || 0); s.kg = Math.max(0, toKg(Math.round((cur + delta) * 100) / 100)); } else s[f] = Math.max(0, Math.round(((s[f] || 0) + delta) * 100) / 100); save('active'); const inp = document.querySelector(`input[data-in="${f}"][data-i="${d.i}"][data-r="${d.r}"]`); if (inp) inp.value = fmtNum(f === 'kg' ? W(s.kg) : s[f]); },
   logSet(d) { unlockAudio(); logSet(+d.i, +d.r); },
@@ -931,13 +965,18 @@ const A = {
   setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.view = 'today'; render(); },
   setGymHere(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
+  gymUnit(d) {
+    const dr = S.gymDraft; if (!dr || (d.u === 'lb') === (U() === 'lb')) return;
+    dr.name = $('#gName').value; dr.airport = $('#gAirport').value; dr.group = $('#gGroup').value; dr.maxDB = gymMaxKg(dr);
+    S.cfg.unit = d.u === 'lb' ? 'lb' : 'kg'; save('cfg'); renderSheet();
+  },
   toggleEq(d, el) { const dr = S.gymDraft; const i = dr.equip.indexOf(d.e); if (i >= 0) dr.equip.splice(i, 1); else dr.equip.push(d.e); el.classList.toggle('on', i < 0); },
   saveGym() {
     const dr = S.gymDraft; const name = ($('#gName').value || '').trim(); if (!name) { toast('Give it a name'); return; }
-    const airport = ($('#gAirport').value || '').trim().toUpperCase(); const group = $('#gGroup').value; const mx = parseFloat($('#gMax').value);
+    const airport = ($('#gAirport').value || '').trim().toUpperCase(); const group = $('#gGroup').value; const mx = gymMaxKg(dr);
     const list = S.data.gyms.gyms;
-    if (dr._for) { const g = list.find((x) => x.id === dr._for); Object.assign(g, { name, airport, group, equip: dr.equip, maxDB: isNaN(mx) ? null : mx }); delete g.unset; }
-    else { const id = (airport || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '-' + uid().slice(0, 4); list.push({ id, name, airport, group, equip: dr.equip, maxDB: isNaN(mx) ? null : mx, lastUsed: null }); S.data.gyms.current = id; }
+    if (dr._for) { const g = list.find((x) => x.id === dr._for); Object.assign(g, { name, airport, group, equip: dr.equip, maxDB: mx }); delete g.unset; }
+    else { const id = (airport || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '-' + uid().slice(0, 4); list.push({ id, name, airport, group, equip: dr.equip, maxDB: mx, lastUsed: null }); S.data.gyms.current = id; }
     save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); closeSheet(); render(); toast('Saved');
   },
   archiveGym(d) { const g = S.data.gyms.gyms.find((x) => x.id === d.g); if (!g) return; g.archived = true; if (S.data.gyms.current === g.id) S.data.gyms.current = S.data.gyms.gyms.find((x) => !x.archived).id; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); closeSheet(); render(); toast('Archived'); },
@@ -1029,9 +1068,10 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 
 /* ---------- boot ---------- */
 (async function boot() {
+  try { history.scrollRestoration = 'manual'; } catch (e) { /* older browsers */ }
   setTimeout(nudgeViewport, 60); setTimeout(nudgeViewport, 600);
   if (S.active) wake();
-  if (S.data && S.data.programme) { S.view = S.active ? 'session' : 'today'; render(); if (configured()) syncSoon(300); return; }
+  if (S.data && S.data.programme) { S.view = S.active ? 'session' : 'today'; S.follow = S.active ? 'jump' : false; render(); if (configured()) syncSoon(300); return; }
   if (!configured()) { S.view = 'settings'; render(); return; }
   S.view = 'loading'; render();
   try { await pullAll(); S.lastSync = Date.now(); save('lastSync'); } catch (e) { S.syncErr = e.message; }
