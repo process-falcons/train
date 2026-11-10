@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -338,7 +338,10 @@ function render() {
   else if (v === 'settings') html = vSettings();
   else if (v === 'choose') html = vChoose();
   app.innerHTML = html;
+  if (v === S.shown && app.firstElementChild) app.firstElementChild.classList.add('still');
+  S.shown = v;
   renderNav(); renderRest();
+  if (S.follow) { S.follow = false; if (v === 'session') requestAnimationFrame(followCur); }
 }
 function renderNav() {
   const nav = $('#nav');
@@ -461,59 +464,77 @@ function nextOpenAfter(k) { const a = S.active; for (let j = 1; j <= a.steps.len
 function vSession() {
   const a = S.active;
   if (!a) { S.view = 'today'; return vToday(); }
-  const [ii, rr] = curStep();
-  const it = a.items[ii], ex = EX(it.ex);
-  const blockItems = a.items.filter((x) => x.bi === it.bi);
+  const [ci, cr] = curStep();
   const bkeys = [...new Set(a.items.map((x) => x.bi))];
-  const segs = bkeys.map((bi) => { const xs = a.items.filter((x) => x.bi === bi); const all = xs.every((x) => x.sets.every((s) => s.done || s.skipped)); return `<span class="${all ? 'done' : bi === it.bi ? 'cur' : ''}"></span>`; }).join('');
-  const kind = it.circuit ? `CIRCUIT · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : it.power ? 'POWER' : it.block === 'FIN' ? 'FINISHER' : it.block === 'WU' ? 'WARM-UP' : it.optional ? 'OPTIONAL' : blockItems.length > 1 ? `SUPERSET ${it.block} · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : `BLOCK ${it.block}`;
-  const unitHint = ex.perDB ? ' · kg per dumbbell' : '';
-  const sideHint = ex.perSide ? ' · per side' : '';
-
-  let rows = '';
-  it.sets.forEach((s, r) => {
-    const editing = r === rr && !(s.done && S.editing !== ii + ':' + r);
-    const was = it.lastSets && it.lastSets[r] ? `was ${setText(it.ex, it.lastSets[r], true)}` : '';
-    if (s.skipped) {
-      rows += `<div class="setrow todo"><span class="n">${r + 1}</span><span class="v">Skipped</span></div>`;
-    } else if (s.done && !(S.editing === ii + ':' + r)) {
-      rows += `<button class="setrow" data-a="editSet" data-i="${ii}" data-r="${r}"><span class="n">${r + 1}</span><span class="v">${esc(setText(it.ex, s))}</span>${s.pr ? '<span class="pr">PR</span>' : ''}<span class="was">${esc(was)}</span><span class="tick ${s.justDone ? 'pop' : ''}" style="color:var(--accent-ink)">${ic('check', 15, 3)}</span></button>`;
-    } else if (r === rr || S.editing === ii + ':' + r) {
-      rows += editor(it, ii, r, was);
-    } else {
-      rows += `<button class="setrow todo" data-a="jump" data-i="${ii}" data-r="${r}"><span class="n">${r + 1}</span><span class="v">${esc(setText(it.ex, s))}</span></button>`;
-    }
-    void editing;
-  });
-
-  const nxt = nextOpenAfter(a.cur);
-  let nextCard = '';
-  if (nxt >= 0) {
-    const [ni, nr] = a.steps[nxt]; const nit = a.items[ni];
-    const ns = nit.sets[nr];
-    const after = nextOpenAfter(nxt); let then = '';
-    if (after >= 0 && after !== a.cur) { const [ti, tr] = a.steps[after]; then = `<span class="small mute" style="display:block;margin-top:6px">Then: ${esc(EX(a.items[ti].ex).name)} · set ${tr + 1}</span>`; }
-    nextCard = `<button class="upnext" data-a="jumpStep" data-k="${nxt}"><span class="label acc">Up next${ni === ii ? '' : ' · ' + esc(nit.slot)}</span><span class="row" style="gap:10px;margin-top:6px"><span class="grow"><span class="un-t">${esc(EX(nit.ex).name)}</span><span class="small soft">Set ${nr + 1} of ${nit.sets.length} · ${esc(setText(nit.ex, ns))}</span></span><span class="mute">${ic('chev', 18)}</span></span>${then}</button>`;
-  }
-  const tip = it.tip ? `<div class="tip ${it.tip.kind === 'info' ? '' : ''}">${ic(it.tip && it.tip.kind === 'up' ? 'up' : 'flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${tipHtml(it.tip)}</span></div>` : '';
-  const sw = it.swapped && it.why ? `<div class="tip amb">${ic('swap', 18, 2.2, 'style="color:var(--amber)"')}<span>Swapped from ${esc(EX(it.orig).name)} · ${esc(it.why)}.</span></div>` : '';
+  const segs = bkeys.map((bi) => { const xs = a.items.filter((x) => x.bi === bi); return `<span class="${xs.every(exFinished) ? 'done' : bi === a.items[ci].bi ? 'cur' : ''}"></span>`; }).join('');
+  const doneSets = a.items.reduce((n, x) => n + x.sets.filter((s) => s.done).length, 0);
+  const groups = bkeys.map((bi) => {
+    const xs = a.items.map((x, i) => [x, i]).filter(([x]) => x.bi === bi);
+    const cards = xs.map(([x, i]) => exCard(a, x, i, ci, cr)).join('');
+    if (xs.length < 2) return cards;
+    const f = xs[0][0], rounds = Math.max(...xs.map(([x]) => x.sets.length));
+    const lbl = f.circuit ? `Circuit · ${rounds} rounds` : f.power ? 'Power · alternate sets' : `Superset ${esc(f.block)} · alternate sets`;
+    return `<div class="exgroup ${f.power ? 'p' : ''}"><div class="label exglabel">${lbl}${f.optional ? ' · optional' : ''}</div>${cards}</div>`;
+  }).join('');
 
   return `<div class="view session">
     <div class="shead"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back to Today">${ic('back', 20)}</button>
       <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
       <button class="textbtn" data-a="finish">Finish</button></div>
     <div class="segs" style="grid-template-columns:repeat(${bkeys.length},minmax(0,1fr))">${segs}</div>
-    <div class="stack">
-      <div class="card excard">
-        <div class="exhead"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><span class="label acc">${kind}</span><h2>${esc(ex.name)}</h2><span class="small mute" style="font-size:13px">${it.sets.length} × ${esc(it.target)}${unitHint}${sideHint}</span></div>
-          <div class="row" style="gap:6px;flex:0 0 auto">${it.sets.some((s) => s.skipped) ? `<button class="swapbtn" data-a="unskipEx" data-i="${ii}">Undo skip</button>` : `<button class="swapbtn" data-a="skipEx" data-i="${ii}">Skip</button>`}<button class="swapbtn" data-a="swapSheet" data-i="${ii}">${ic('swap', 14)}Swap</button></div></div>
-        ${sw}${tip}
-        <div>${rows}</div>
-        <div class="row" style="justify-content:space-between;padding:0 4px"><button class="small mute" data-a="addSet" data-i="${ii}" style="height:36px">+ Add set</button>${it.sets.length > 1 && !it.sets[it.sets.length - 1].done ? `<button class="small mute" data-a="delSet" data-i="${ii}" style="height:36px">Remove last set</button>` : ''}</div>
-      </div>
-      ${nextCard}
-      <button class="nextcard" data-a="overview"><span class="mute">${ic('list', 18)}</span><span class="grow" style="font-size:15px;font-weight:600">All exercises</span><span class="small mute">${a.items.reduce((n, x) => n + x.sets.filter((s) => s.done).length, 0)} / ${a.steps.length} sets</span></button>
-    </div></div>`;
+    <div class="small mute" style="padding:0 8px 12px">${doneSets} of ${a.steps.length} sets logged</div>
+    <div class="stack">${groups}</div></div>`;
+}
+const exFinished = (it) => it.sets.every((s) => s.done || s.skipped);
+
+/* one exercise in the full workout list; the current set opens its editor in place */
+function exCard(a, it, ii, ci, cr) {
+  const ex = EX(it.ex), isCur = ii === ci, fin = exFinished(it), skipped = it.sets.some((s) => s.skipped);
+  const inGroup = a.items.filter((x) => x.bi === it.bi).length > 1;
+  const kind = it.power && !inGroup ? 'POWER' : it.block === 'FIN' ? 'FINISHER' : it.block === 'WU' ? 'WARM-UP' : inGroup ? esc(it.slot) : it.optional ? 'OPTIONAL' : `BLOCK ${esc(it.block)}`;
+  const unitHint = ex.perDB ? ' · kg per dumbbell' : '';
+  const sideHint = ex.perSide ? ' · per side' : '';
+
+  let rows = '';
+  it.sets.forEach((s, r) => {
+    const was = it.lastSets && it.lastSets[r] ? `was ${setText(it.ex, it.lastSets[r], true)}` : '';
+    const key = ii + ':' + r;
+    if (s.skipped) {
+      rows += `<div class="setrow todo"><span class="n">${r + 1}</span><span class="v">Skipped</span></div>`;
+    } else if (s.done && S.editing !== key) {
+      rows += `<button class="setrow" data-a="editSet" data-i="${ii}" data-r="${r}"><span class="n">${r + 1}</span><span class="v">${esc(setText(it.ex, s))}</span>${s.pr ? '<span class="pr">PR</span>' : ''}<span class="was">${esc(was)}</span><span class="tick ${s.justDone ? 'pop' : ''}" style="color:var(--accent-ink)">${ic('check', 15, 3)}</span></button>`;
+    } else if ((isCur && r === cr) || S.editing === key) {
+      rows += editor(it, ii, r, was);
+    } else {
+      rows += `<button class="setrow todo" data-a="jump" data-i="${ii}" data-r="${r}"><span class="n">${r + 1}</span><span class="v">${esc(setText(it.ex, s))}</span>${was ? `<span class="was">${esc(was)}</span>` : ''}</button>`;
+    }
+  });
+
+  const tip = isCur && it.tip ? `<div class="tip">${ic(it.tip.kind === 'up' ? 'up' : 'flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${tipHtml(it.tip)}</span></div>` : '';
+  const sw = it.swapped && it.why ? `<div class="tip amb">${ic('swap', 18, 2.2, 'style="color:var(--amber)"')}<span>Swapped from ${esc(EX(it.orig).name)} · ${esc(it.why)}.</span></div>` : '';
+  const btns = skipped ? `<button class="swapbtn" data-a="unskipEx" data-i="${ii}">Undo skip</button>`
+    : fin ? `<span class="tick" style="color:var(--accent-ink)">${ic('check', 15, 3)}</span>`
+    : `<button class="swapbtn" data-a="skipEx" data-i="${ii}">Skip</button><button class="swapbtn" data-a="swapSheet" data-i="${ii}">${ic('swap', 14)}Swap</button>`;
+  const lastOpen = it.sets.length > 1 && !it.sets[it.sets.length - 1].done && !it.sets[it.sets.length - 1].skipped;
+
+  return `<div class="card excard ${isCur && !fin ? 'cur' : ''} ${fin ? 'fin' : ''}" data-ex="${ii}">
+      <div class="exhead"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><span class="label ${it.power ? 'amb' : 'acc'}">${kind}</span><h2>${esc(ex.name)}</h2><span class="small mute" style="font-size:13px">${it.sets.length} × ${esc(it.target)}${unitHint}${sideHint}</span></div>
+        <div class="row" style="gap:6px;flex:0 0 auto">${btns}</div></div>
+      ${sw}${tip}
+      <div>${rows}</div>
+      ${skipped ? '' : `<div class="row" style="justify-content:space-between;padding:0 4px"><button class="small mute" data-a="addSet" data-i="${ii}" style="height:36px">+ Add set</button>${lastOpen ? `<button class="small mute" data-a="delSet" data-i="${ii}" style="height:36px">Remove last set</button>` : ''}</div>`}
+    </div>`;
+}
+
+/* after logging or skipping, bring the next set's editor into view (with its exercise name if it fits) */
+function followCur() {
+  const ed = document.querySelector('.excard.cur .editor'); if (!ed) return;
+  const card = ed.closest('.excard'), r = ed.getBoundingClientRect(), c = card.getBoundingClientRect();
+  const minTop = 64, maxBottom = window.innerHeight - 130;
+  if (r.top >= minTop && r.bottom <= maxBottom) return;
+  let d = c.top - minTop;
+  if (r.bottom - d > maxBottom) d = r.bottom - maxBottom;
+  window.scrollBy({ top: d, behavior: 'smooth' });
 }
 
 function editor(it, ii, r, was) {
@@ -551,7 +572,7 @@ function logSet(ii, r) {
     const sameRoundPartner = nxt >= 0 && a.items[a.steps[nxt][0]].bi === it.bi && a.steps[nxt][1] === r && a.steps[nxt][0] !== ii;
     const restSec = sameRoundPartner ? (it.circuit ? 10 : 20) : it.circuit ? 45 : it.power ? (P().defaults.powerRestSec || 75) : (S.cfg.rest || 90);
     if (nxt >= 0) {
-      a.cur = nxt;
+      a.cur = nxt; S.follow = true;
       const nit = a.items[a.steps[nxt][0]];
       a.rest = { end: Date.now() + restSec * 1000, total: restSec, label: sameRoundPartner ? `Move on · ${EX(nit.ex).name}` : `Rest · then ${EX(nit.ex).name}`, chimed: false };
     } else { a.rest = null; setTimeout(() => toast('All sets done – tap Finish'), 300); }
@@ -559,16 +580,6 @@ function logSet(ii, r) {
     if (s.pr) toast(`New PR · ${ex.name}`);
   }
   save('active'); render();
-}
-
-function vOverviewSheet() {
-  const a = S.active;
-  const rows = a.items.map((it, i) => {
-    const d = it.sets.filter((s) => s.done).length;
-    const k = a.steps.findIndex(([x, r]) => x === i && !it.sets[r].done);
-    return `<button class="opt ${d === it.sets.length ? '' : ''}" data-a="jumpStep" data-k="${k >= 0 ? k : a.steps.findIndex(([x]) => x === i)}"><span style="width:36px;font-size:12px;font-weight:700;color:${it.power ? 'var(--amber)' : 'var(--accent)'}">${esc(it.slot)}</span><span class="grow"><span style="display:block;font-weight:600">${esc(EX(it.ex).name)}</span><span class="small mute">${esc(it.target)}${it.optional ? ' · optional' : ''}</span></span><span class="small ${d === it.sets.length ? 'acc' : 'mute'}" style="font-weight:700">${it.sets.every((s) => s.done || s.skipped) && it.sets.some((s) => s.skipped) ? 'Skipped' : d + '/' + it.sets.length}</span></button>`;
-  }).join('');
-  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>All exercises</h3><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>${rows}`;
 }
 
 function swapOpt(ii, id, it, g, note) {
@@ -873,7 +884,7 @@ function vSettings() {
 function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#sheet').scrollTop = 0; document.documentElement.classList.add('locked'); $('#sheet').classList.add('on'); $('#scrim').classList.add('on'); }
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
-  if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet(); else if (kind === 'overview') h = vOverviewSheet();
+  if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet();
   else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg);
   $('#sheet').innerHTML = h;
 }
@@ -890,7 +901,7 @@ const A = {
   selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; render(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
-  resume() { S.view = 'session'; unlockAudio(); wake(); render(); toTop(); },
+  resume() { S.view = 'session'; unlockAudio(); wake(); toTop(); S.follow = true; render(); },
   sync() { sync(true); },
   step(d) { const s = S.active.items[+d.i].sets[+d.r]; const f = d.f, delta = parseFloat(d.d); if (f === 'kg') { const cur = W(s.kg || 0); s.kg = Math.max(0, toKg(Math.round((cur + delta) * 100) / 100)); } else s[f] = Math.max(0, Math.round(((s[f] || 0) + delta) * 100) / 100); save('active'); const inp = document.querySelector(`input[data-in="${f}"][data-i="${d.i}"][data-r="${d.r}"]`); if (inp) inp.value = fmtNum(f === 'kg' ? W(s.kg) : s[f]); },
   logSet(d) { unlockAudio(); logSet(+d.i, +d.r); },
@@ -899,13 +910,12 @@ const A = {
   jumpStep(d) { const k = +d.k; if (k >= 0) { S.active.cur = k; S.editing = null; save('active'); } closeSheet(); render(); toTop(); },
   addSet(d) { const it = S.active.items[+d.i]; const last = it.sets[it.sets.length - 1]; it.sets.push({ ...last, done: false, pr: false }); S.active.steps = buildSteps(S.active.items); save('active'); render(); },
   delSet(d) { const it = S.active.items[+d.i]; if (it.sets.length > 1 && !it.sets[it.sets.length - 1].done) { it.sets.pop(); const cur = S.active.steps[S.active.cur]; S.active.steps = buildSteps(S.active.items); const k = cur ? S.active.steps.findIndex(([i, r]) => i === cur[0] && r === cur[1]) : -1; S.active.cur = k >= 0 ? k : Math.max(0, nextOpenAfter(-1)); save('active'); render(); } },
-  skipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { if (!s.done) s.skipped = true; }); a.rest = null; S.editing = null; const nxt = nextOpenAfter(a.cur); if (nxt >= 0) a.cur = nxt; save('active'); render(); toast(nxt >= 0 ? 'Skipped ' + EX(it.ex).name : 'All done – tap Finish'); },
+  skipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { if (!s.done) s.skipped = true; }); a.rest = null; S.editing = null; const nxt = nextOpenAfter(a.cur); if (nxt >= 0) { a.cur = nxt; S.follow = true; } save('active'); render(); toast(nxt >= 0 ? 'Skipped ' + EX(it.ex).name : 'All done – tap Finish'); },
   unskipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { s.skipped = false; }); const k = a.steps.findIndex(([i, r]) => i === +d.i && !it.sets[r].done); if (k >= 0) a.cur = k; save('active'); render(); },
   swapSheet(d) { S.remember = true; openSheet('swap', +d.i); },
   doSwap(d) { doSwap(+d.i, d.x); },
   doSwapCustom(d) { const v = ($('#exSearch') || {}).value; if (!v || !v.trim()) { toast('Type an exercise name'); return; } doSwap(+d.i, 'custom:' + v.trim().slice(0, 60)); },
   toggleRemember() { S.remember = S.remember === false; const sw = $('#remSw'); if (sw) sw.classList.toggle('on', S.remember !== false); },
-  overview() { openSheet('overview'); },
   finish() { openSheet('finish'); },
   rpe(d) { S.active.rpe = +d.n; const n = $('#notes'); if (n) S.active.notes = n.value; save('active'); renderSheet(); },
   saveSession() { saveSession(); },
@@ -974,6 +984,47 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
   const end = () => { if (y0 == null) return; sh.style.transition = ''; sh.style.transform = ''; if (drag && dy > 90) closeSheet(); y0 = null; drag = false; };
   sh.addEventListener('touchend', end); sh.addEventListener('touchcancel', end);
   $('#scrim').addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+})();
+
+/* screens with a back arrow: swipe right, or pull down from the top, to go back */
+(function backSwipe() {
+  const BACK = { choose: 'today' };
+  let x0 = null, y0 = 0, dx = 0, dy = 0, mode = null, el = null;
+  document.addEventListener('touchstart', (e) => {
+    x0 = null;
+    if (!BACK[S.view] || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea')) return;
+    el = $('#app > .view'); if (!el) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; dy = 0; mode = null;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (x0 == null || mode === 'none') return;
+    dx = e.touches[0].clientX - x0; dy = e.touches[0].clientY - y0;
+    if (!mode) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      mode = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : dy > 0 && dy > Math.abs(dx) && window.scrollY <= 0 ? 'y' : 'none';
+      if (mode === 'none') return;
+      el.style.animation = 'none'; el.style.transition = 'none';
+    }
+    e.preventDefault();
+    const f = mode === 'x' ? Math.max(0, dx) / window.innerWidth : Math.max(0, dy) / 500;
+    el.style.transform = mode === 'x' ? `translateX(${Math.max(0, dx)}px)` : `translateY(${Math.max(0, dy) * 0.5}px)`;
+    el.style.opacity = String(1 - Math.min(0.5, f));
+  }, { passive: false });
+  let swallowUntil = 0;
+  document.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.preventDefault(); e.stopPropagation(); } }, true);
+  const end = (e) => {
+    if (x0 == null) return;
+    x0 = null;
+    if (!mode || mode === 'none') return;
+    if (e.cancelable) e.preventDefault();
+    swallowUntil = Date.now() + 450;
+    const leave = mode === 'x' ? dx > 90 : dy > 140, to = BACK[S.view];
+    el.style.transition = 'transform .22s var(--ease), opacity .22s';
+    if (leave) { el.style.transform = mode === 'x' ? 'translateX(100%)' : 'translateY(35%)'; el.style.opacity = '0'; setTimeout(() => { if (S.view in BACK) A.go({ v: to }); }, 200); }
+    else { el.style.transform = ''; el.style.opacity = ''; }
+    mode = null;
+  };
+  document.addEventListener('touchend', end, { passive: false }); document.addEventListener('touchcancel', end);
 })();
 
 /* ---------- boot ---------- */
