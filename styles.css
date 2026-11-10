@@ -183,3 +183,17 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .syncdot{width:8px;height:8px;border-radius:4px;background:var(--accent);display:inline-block}
 .syncdot.pend{background:var(--amber)} .syncdot.off{background:var(--dim)}
 .empty{padding:28px 18px;text-align:center;color:var(--mute);font-size:14px;line-height:1.5}
+
+/* week strip */
+.weekhead{display:flex;align-items:center;justify-content:space-between;padding:0 2px}
+.iconbtn.sm{width:36px;height:36px;border-radius:18px}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.day{height:74px;border-radius:16px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:relative;transition:all .2s var(--ease)}
+.day .dl{font-size:11px;color:var(--mute);font-weight:600}
+.day .dn{font-family:"Space Grotesk",Inter,system-ui,sans-serif;font-size:18px;font-weight:700}
+.day .lb{font-size:10px;font-weight:700;color:var(--dim);letter-spacing:.02em;min-height:12px}
+.day.lift .lb{color:var(--accent)}
+.day.today .dn{color:var(--accent)}
+.day.on{background:var(--raise);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.day .done{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:4px;background:var(--accent)}
+.plannote{display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--soft);margin-top:2px}

@@ -1,10 +1,10 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
-const FILES = ['programme', 'gyms', 'plan', 'coros', 'body'];
+const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
 const DAY = 86400000;
 
 /* ---------- small helpers ---------- */
@@ -41,7 +41,7 @@ const I = {
 const ic = (n, sz = 20, sw = 2.2, extra = '') => `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${I[n]}</svg>`;
 const playIc = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>';
 
-const EQUIP = [['dumbbells', 'Dumbbells'], ['bench', 'Bench'], ['barbell', 'Barbell'], ['cable', 'Cable'], ['lat_pulldown', 'Lat pulldown'], ['smith', 'Smith'], ['leg_press', 'Leg press'], ['hack_squat', 'Hack squat'], ['leg_curl', 'Leg curl'], ['leg_ext', 'Leg extension'], ['ghd', 'GHD'], ['back_ext', 'Back extension'], ['pullup_bar', 'Pull-up bar'], ['dip_station', 'Dip station'], ['kettlebell', 'Kettlebells'], ['box', 'Plyo box'], ['med_ball', 'Med ball'], ['band', 'Bands'], ['vest', 'Weight vest'], ['calf_machine', 'Calf machine'], ['seated_calf', 'Seated calf'], ['hip_thrust', 'Hip thrust'], ['row_machine', 'Row machine'], ['chest_press', 'Chest press'], ['shoulder_press', 'Shoulder press'], ['pec_deck', 'Pec deck'], ['trap_bar', 'Trap bar'], ['bike', 'Bike'], ['rower', 'Rower'], ['treadmill', 'Treadmill']];
+const EQUIP = [['dumbbells', 'Dumbbells'], ['bench', 'Bench'], ['barbell', 'Barbell'], ['cable', 'Cable'], ['lat_pulldown', 'Lat pulldown'], ['smith', 'Smith'], ['leg_press', 'Leg press'], ['hack_squat', 'Hack squat'], ['leg_curl', 'Leg curl'], ['leg_ext', 'Leg extension'], ['ghd', 'GHD'], ['back_ext', 'Back extension'], ['pullup_bar', 'Pull-up bar'], ['dip_station', 'Dip station'], ['kettlebell', 'Kettlebells'], ['box', 'Plyo box'], ['med_ball', 'Med ball'], ['band', 'Bands'], ['vest', 'Weight vest'], ['calf_machine', 'Calf machine'], ['seated_calf', 'Seated calf'], ['hip_thrust', 'Hip thrust'], ['row_machine', 'Row machine'], ['chest_press', 'Chest press'], ['shoulder_press', 'Shoulder press'], ['pec_deck', 'Pec deck'], ['trap_bar', 'Trap bar'], ['rack', 'Squat rack'], ['ab_wheel', 'Ab wheel'], ['bike', 'Bike'], ['rower', 'Rower'], ['treadmill', 'Treadmill']];
 const EQ_NAME = Object.fromEntries(EQUIP);
 
 /* ---------- state ---------- */
@@ -303,8 +303,25 @@ function statusLine() {
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusLine(); }
 
 /* ---------- view: today ---------- */
+const SHORT = { s1: 'S1', s2: 'S2', s3: 'S3', hotel: 'Hotel', snack: 'Snack' };
+function schedDay(d) { const s = S.data.schedule; return s && s.days ? s.days[ymd(d)] || null : null; }
+function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
+function weekStrip(t0, sel) {
+  const ws = weekStart(t0); ws.setDate(ws.getDate() + 7 * (S.weekOff || 0));
+  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span><button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button></div><div class="week">`;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(ws); d.setDate(ws.getDate() + i);
+    const sd = schedDay(d), done = loggedOn(d).length, k = ymd(d);
+    const lbl = sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
+    h += `<button class="day ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}"><span class="dl">${DOW[d.getDay()][0]}</span><span class="dn">${d.getDate()}</span><span class="lb">${lbl}</span>${done ? '<i class="done"></i>' : ''}</button>`;
+  }
+  return h + '</div>';
+}
 function vToday() {
-  const d = new Date();
+  const d = new Date(), t0 = today0();
+  const sel = S.selDay ? parseD(S.selDay) : t0;
+  const isToday = ymd(sel) === ymd(t0);
+  const selName = isToday ? 'today' : `${DOW[sel.getDay()].slice(0, 3)} ${sel.getDate()} ${MON[sel.getMonth()]}`;
   const ph = phaseNow();
   const ring = ph ? (() => { const c = 2 * Math.PI * 24, f = ph.wk / ph.total; return `<div class="ring-wrap" aria-label="Week ${ph.wk} of ${ph.total} in ${esc(ph.name)}"><svg width="56" height="56" viewBox="0 0 56 56"><circle cx="28" cy="28" r="24" fill="none" stroke="#1C2027" stroke-width="5"/><circle cx="28" cy="28" r="24" fill="none" stroke="var(--accent)" stroke-width="5" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 28 28)"/></svg><div class="lab"><b>${ph.wk}/${ph.total}</b><small>WEEK</small></div></div>`; })() : '';
   let h = `<div class="view"><div class="head"><div><div class="sub">${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}</div><h1>Today</h1></div><div class="row" style="gap:10px"><button class="iconbtn" data-a="go" data-v="settings" aria-label="Settings">${ic('gear', 20, 2)}</button>${ring}</div></div><div class="stack">`;
@@ -313,28 +330,40 @@ function vToday() {
     const a = S.active, done = a.items.reduce((n, it) => n + it.sets.filter((s) => s.done).length, 0);
     h += `<button class="card pad row" data-a="resume" style="border:1px solid var(--accent);text-align:left"><div class="grow"><div class="label acc">In progress · ${fmtTime((Date.now() - a.start) / 1000)}</div><div style="font-size:18px;font-weight:700;margin-top:4px">${esc(a.name)}</div><div class="small mute">${done} sets logged · ${esc(a.gymName)}</div></div><span class="btn sm" style="width:auto;padding:0 18px">Resume</span></button>`;
   }
+  h += weekStrip(t0, sel);
 
-  const sid = S.pick || nextSessionId();
-  const s = session(sid), g = gym();
-  const items = [];
-  s.blocks.forEach((b) => b.items.forEach((it) => items.push({ b, it, r: resolve(sid, it, g) })));
-  const blocks = [];
-  for (const b of s.blocks) {
-    const rs = items.filter((x) => x.b === b);
-    const names = rs.map((x, i) => (i ? `<span class="mute"> + ${esc(EX(x.r.ex).name)}</span>` : esc(EX(x.r.ex).name))).join('');
-    const sw = rs.filter((x) => x.r.swapped && x.r.why).map((x) => `<span class="swapnote">${rs.length > 1 ? esc(x.it.slot) + ' swapped · ' : 'Swapped · '}${esc(x.r.why)}</span>`).join('');
-    const sets = Math.max(...rs.map((x) => x.it.sets));
-    const k = b.key === 'PWR' ? 'PWR' : b.key === 'FIN' ? 'FIN' : b.key === 'WU' ? 'WU' : b.key === 'OPT' ? 'OPT' : b.key;
-    blocks.push(`<li><span class="k ${b.power ? 'p' : ''}">${k}</span><span class="grow">${names}${sw}</span><span class="t">${sets} × ${esc(rs[0].it.target)}</span></li>`);
+  const sd = schedDay(sel);
+  const planned = sd ? sd.sid : (isToday ? nextSessionId() : null);
+  const sid = S.pick || planned;
+  const doneLogs = loggedOn(sel);
+  const g = gym();
+  const extra = sd && (sd.note || sd.other) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${sd.other ? `<span class="mute">Also: ${esc(sd.other)}</span>` : ''}</div>` : '';
+
+  if (!sid) {
+    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>No lifting planned</h2>${extra}</div>
+      ${doneLogs.length ? `<div style="padding:0 20px 16px" class="small acc">Logged: ${doneLogs.map((l) => esc(l.name)).join(', ')}</div>` : ''}</div>`;
+  } else {
+    const s = session(sid);
+    const items = [];
+    s.blocks.forEach((b) => b.items.forEach((it) => items.push({ b, it, r: resolve(sid, it, g) })));
+    const blocks = [];
+    for (const b of s.blocks) {
+      const rs = items.filter((x) => x.b === b);
+      const names = rs.map((x, i) => (i ? `<span class="mute"> + ${esc(EX(x.r.ex).name)}</span>` : esc(EX(x.r.ex).name))).join('');
+      const sw = rs.filter((x) => x.r.swapped && x.r.why).map((x) => `<span class="swapnote">${rs.length > 1 ? esc(x.it.slot) + ' swapped · ' : 'Swapped · '}${esc(x.r.why)}</span>`).join('');
+      const sets = Math.max(...rs.map((x) => x.it.sets));
+      blocks.push(`<li><span class="k ${b.power ? 'p' : ''}">${b.key}</span><span class="grow">${names}${sw}</span><span class="t">${sets} × ${esc(rs[0].it.target)}</span></li>`);
+    }
+    const swaps = items.filter((x) => x.r.swapped).length;
+    const isDone = doneLogs.some((l) => l.sid === sid);
+    const tag = S.pick && S.pick !== planned ? '<span class="tag amb">YOUR PICK</span>' : sd && sd.sid ? `<span class="tag acc">PLANNED ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : '<span class="tag">UP NEXT</span>';
+    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${(P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
+      <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
+      <ol class="exlist">${blocks.join('')}</ol>
+      <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
   }
-  const swaps = items.filter((x) => x.r.swapped).length;
-  const isRot = (P().rotation || []).includes(sid);
-  h += `<div class="card"><div class="hero"><div class="row" style="gap:6px">${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}<span class="tag">${s.minutes} MIN</span>${sid === nextSessionId() && isRot ? '<span class="tag">UP NEXT</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${isRot ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div></div>
-    <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
-    <ol class="exlist">${blocks.join('')}</ol>
-    <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : 'Start session'}</button></div></div>`;
 
-  h += `<div class="chips">${P().sessions.filter((x) => x.id !== sid).map((x) => `<button class="pill" data-a="pick" data-s="${x.id}">${esc(x.name)}</button>`).join('')}</div>`;
+  h += `<div class="label" style="padding:4px 4px 0">${sid ? 'Or do a different session' : 'Pick a session anyway'}</div><div class="chips">${S.pick && S.pick !== planned && planned ? `<button class="pill on" data-a="pick" data-s="">Back to plan</button>` : ''}${P().sessions.filter((x) => x.id !== sid).map((x) => `<button class="pill" data-a="pick" data-s="${x.id}">${esc(x.name)}</button>`).join('')}</div>`;
 
   const last = stats().logs[0];
   if (last) {
@@ -477,18 +506,32 @@ function vOverviewSheet() {
   return `<div class="grab"></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>All exercises</h3><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>${rows}`;
 }
 
+function swapOpt(ii, id, it, g, note) {
+  const ex = EX(id), ok = hasEquip(ex, g), last = lastFor(id);
+  const lastTxt = last ? `last: ${last.sets.map((s) => setText(id, s, true)).slice(0, 2).join(', ')}` : 'never logged';
+  return `<button class="opt ${id === it.ex ? 'best' : ''} ${ok ? '' : 'na'}" data-a="doSwap" data-i="${ii}" data-x="${esc(id)}"><span class="grow"><span style="display:block;font-size:16px;font-weight:600">${esc(ex.name)}</span><span class="small mute">${ok ? '' : 'Needs ' + esc(missingFor(ex, g).join(', ')) + ' · '}${esc(lastTxt)}</span></span>${id === it.ex ? '<span class="small acc" style="font-weight:700">Current</span>' : note ? `<span class="small mute">${note}</span>` : ''}</button>`;
+}
 function vSwapSheet(ii) {
   const a = S.active, it = a.items[ii], g = gym(a.gymId);
-  const opts = it.opts.map((id, n) => {
-    const ex = EX(id), ok = hasEquip(ex, g), last = lastFor(id);
-    const lastTxt = last ? `last: ${last.sets.map((s) => setText(id, s, true)).slice(0, 2).join(', ')}` : 'never logged';
-    return `<button class="opt ${id === it.ex ? 'best' : ''} ${ok ? '' : 'na'}" data-a="doSwap" data-i="${ii}" data-x="${id}"><span class="grow"><span style="display:block;font-size:16px;font-weight:600">${esc(ex.name)}</span><span class="small mute">${ok ? '' : 'Needs ' + esc(missingFor(ex, g).join(', ')) + ' · '}${esc(lastTxt)}</span></span>${id === it.ex ? '<span class="small acc" style="font-weight:700">Current</span>' : n === 0 ? '<span class="small mute">Planned</span>' : ''}</button>`;
-  }).join('');
+  const all = P().exercises, pat = EX(it.ex).pattern || EX(it.orig).pattern;
+  const sortAvail = (ids) => ids.sort((x, y) => (hasEquip(EX(y), g) - hasEquip(EX(x), g)) || EX(x).name.localeCompare(EX(y).name));
+  const plan = it.opts.map((id, n) => swapOpt(ii, id, it, g, n === 0 ? 'Planned' : '')).join('');
+  const same = sortAvail(Object.keys(all).filter((id) => all[id].pattern === pat && !it.opts.includes(id))).map((id) => swapOpt(ii, id, it, g)).join('');
+  const patName = (P().patterns || {})[pat] || 'similar';
   return `<div class="grab"></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">Swap ${esc(it.slot)} · ${esc(g.name)}</div><h3>Choose an exercise</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
-    <div class="label" style="margin:6px 0 8px">From your programme</div>${opts}
-    <label class="field" style="margin-top:10px">Something else<input id="customEx" placeholder="Type an exercise name"></label>
-    <button class="toggle" data-a="toggleRemember"><span>Remember this swap for ${esc(g.name)}</span><span class="sw ${S.remember !== false ? 'on' : ''}" id="remSw"></span></button>
-    <button class="btn ghost sm" data-a="doSwapCustom" data-i="${ii}" style="margin-top:8px">Use typed exercise</button>`;
+    <div class="label" style="margin:6px 0 8px">From your programme</div>${plan}
+    ${same ? `<div class="label" style="margin:16px 0 8px">Other ${esc(patName.toLowerCase())} options</div>${same}` : ''}
+    <button class="toggle" data-a="toggleRemember" style="margin-top:6px"><span>Remember this swap for ${esc(g.name)}</span><span class="sw ${S.remember !== false ? 'on' : ''}" id="remSw"></span></button>
+    <div class="label" style="margin:16px 0 8px">Any exercise</div>
+    <label class="field" style="margin-bottom:8px"><span class="sr">Search exercises</span><input id="exSearch" data-search="${ii}" placeholder="Search all exercises" autocomplete="off"></label>
+    <div id="exResults"></div>
+    <button class="btn ghost sm" data-a="doSwapCustom" data-i="${ii}" style="margin-top:4px">Not listed? Use what you typed</button>`;
+}
+function searchResults(ii, q) {
+  const a = S.active, it = a.items[ii], g = gym(a.gymId), all = P().exercises;
+  q = q.trim().toLowerCase(); if (!q) return '';
+  const ids = Object.keys(all).filter((id) => all[id].name.toLowerCase().includes(q) || ((P().patterns || {})[all[id].pattern] || '').toLowerCase().includes(q)).slice(0, 12);
+  return ids.length ? ids.map((id) => swapOpt(ii, id, it, g, esc(((P().patterns || {})[all[id].pattern]) || ''))).join('') : '<div class="small mute" style="padding:6px 4px 10px">No match – tap the button below to log it as a new exercise.</div>';
 }
 function doSwap(ii, exId) {
   const a = S.active, it = a.items[ii], g = gym(a.gymId);
@@ -754,7 +797,9 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.ad
 /* ---------- actions ---------- */
 const A = {
   go(d) { S.view = d.v; S.editing = null; render(); window.scrollTo(0, 0); },
-  pick(d) { S.pick = d.s; render(); },
+  pick(d) { S.pick = d.s || null; render(); },
+  selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; render(); },
+  weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
   resume() { S.view = 'session'; unlockAudio(); wake(); render(); window.scrollTo(0, 0); },
   sync() { sync(true); },
@@ -767,7 +812,7 @@ const A = {
   delSet(d) { const it = S.active.items[+d.i]; if (it.sets.length > 1 && !it.sets[it.sets.length - 1].done) { it.sets.pop(); const cur = S.active.steps[S.active.cur]; S.active.steps = buildSteps(S.active.items); const k = cur ? S.active.steps.findIndex(([i, r]) => i === cur[0] && r === cur[1]) : -1; S.active.cur = k >= 0 ? k : Math.max(0, nextOpenAfter(-1)); save('active'); render(); } },
   swapSheet(d) { S.remember = true; openSheet('swap', +d.i); },
   doSwap(d) { doSwap(+d.i, d.x); },
-  doSwapCustom(d) { const v = ($('#customEx') || {}).value; if (!v || !v.trim()) { toast('Type an exercise name'); return; } doSwap(+d.i, 'custom:' + v.trim().slice(0, 60)); },
+  doSwapCustom(d) { const v = ($('#exSearch') || {}).value; if (!v || !v.trim()) { toast('Type an exercise name'); return; } doSwap(+d.i, 'custom:' + v.trim().slice(0, 60)); },
   toggleRemember() { S.remember = S.remember === false; const sw = $('#remSw'); if (sw) sw.classList.toggle('on', S.remember !== false); },
   overview() { openSheet('overview'); },
   finish() { openSheet('finish'); },
@@ -814,6 +859,7 @@ document.addEventListener('change', (e) => {
   const s = S.active.items[+el.dataset.i].sets[+el.dataset.r]; const v = parseFloat(String(el.value).replace(',', '.'));
   s[el.dataset.in] = isNaN(v) ? null : Math.max(0, v); save('active');
 });
+document.addEventListener('input', (e) => { const el = e.target; if (el.dataset && el.dataset.search != null) { const box = $('#exResults'); if (box) box.innerHTML = searchResults(+el.dataset.search, el.value); } });
 document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.dataset.in) setTimeout(() => e.target.select(), 0); });
 
 /* ---------- boot ---------- */
