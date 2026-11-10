@@ -1,10 +1,10 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.8.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
-const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
+const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
 const DAY = 86400000;
 
 /* ---------- small helpers ---------- */
@@ -43,6 +43,7 @@ const I = {
   today: '<path d="M6.5 6.5h11M6.5 17.5h11M3 9v6M21 9v6M6.5 6.5v11M17.5 6.5v11"/>', progress: '<path d="M4 19l5-6 4 3 7-9"/>',
   plan: '<path d="M8 3v18M4 7h8M16 3v18M12 15h8"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  plane: '<path d="M10.5 4.5a1.5 1.5 0 0 1 3 0V10l7 4.5v2l-7-2.5v4.5l2 1.5v1.5L12 20.5 8.5 21.5V20l2-1.5V14l-7 2.5v-2l7-4.5z"/>',
   cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
   cloud: '<path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.5 13 3.5 3.5 0 0 0 6 19z"/>',
@@ -95,6 +96,7 @@ async function pullAll() {
   const next = Object.assign({}, S.data || {});
   if (DEV) {
     for (const f of FILES) { try { const r = await fetch(DEV_BASE + f + '.json', { cache: 'no-store' }); if (r.ok) next[f] = await r.json(); } catch (e) { /* offline */ } }
+    Object.assign(next, LS.get('devfiles', {})); // dev mode: file edits saved in this browser, never sent to GitHub
   } else {
     const got = await Promise.all(FILES.map((f) => GH.get(f + '.json').then((j) => [f, j])));
     for (const [f, j] of got) if (j && j.content) next[f] = JSON.parse(b64dec(j.content));
@@ -115,7 +117,7 @@ async function pullAll() {
 async function pushQueue() {
   while (S.queue.length) {
     const q = S.queue[0];
-    if (DEV) { S.queue.shift(); save('queue'); continue; }
+    if (DEV) { if (q.kind === 'file') { const o = LS.get('devfiles', {}); o[q.name] = q.data; LS.set('devfiles', o); } S.queue.shift(); save('queue'); continue; }
     if (q.kind === 'log') {
       const path = 'logs/' + q.name;
       try { await GH.put(path, q.data, null, 'Log ' + q.name); }
@@ -366,6 +368,58 @@ function renderStatus() { const el = $('#status'); if (el) el.innerHTML = status
 const unitSeg = () => `<div class="seg" role="group" aria-label="Weight unit"><button data-a="unit" data-u="kg" class="${U() === 'kg' ? 'on' : ''}">kg</button><button data-a="unit" data-u="lb" class="${U() === 'lb' ? 'on' : ''}">lb</button></div>`;
 const SHORT = { s1: 'S1', s2: 'S2', s3: 'S3', hotel: 'Hotel', snack: 'Snack' };
 function schedDay(d) { const s = S.data.schedule; return s && s.days ? s.days[ymd(d)] || null : null; }
+/* ---------- roster: duties from roster.json, and sessions suggested from them ---------- */
+const DUTY = { FLY: 'Flying', LAYOVER: 'Layover', OFF: 'Day off', STBH: 'Home standby', STBA: 'Airport standby' };
+const DUTY_TAG = { FLY: 'FLY', LAYOVER: 'LAY', STBH: 'SBH', STBA: 'SBA' };
+const RULES_DEFAULT = { earlyReportBefore: '07:00', early: 'snack', layover: 'hotel', overnight: 'rest', standby: 'rotation', leaveMinutes: 120 };
+const rules = () => Object.assign({}, RULES_DEFAULT, (S.data.plan && S.data.plan.rosterRules) || {});
+function rosterDay(d) { const r = S.data.roster; return r && r.days ? r.days[ymd(d)] || null : null; }
+const hm = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
+const hmStr = (min) => { min = ((min % 1440) + 1440) % 1440; return pad(Math.floor(min / 60)) + ':' + pad(min % 60); };
+const leaveBy = (r) => { const m = hm(r && r.report); return m == null ? null : hmStr(m - (+rules().leaveMinutes || 120)); };
+const sectorCount = (s) => (Array.isArray(s) ? s.length : +s || 0);
+function sectorsText(r) {
+  const n = sectorCount(r.sectors); if (!n) return '';
+  return (Array.isArray(r.sectors) ? r.sectors.join(' · ') + ' · ' : '') + `${n} sector${n > 1 ? 's' : ''}`;
+}
+/* a suggestion for days schedule.json leaves empty, from the duty rules in plan.json "rosterRules" */
+function autoPlan(d) {
+  const r = rosterDay(d), prev = new Date(d); prev.setDate(d.getDate() - 1);
+  const pr = rosterDay(prev), R = rules();
+  let act = null, why = '';
+  if (r && r.overnight) { act = R.overnight; why = 'Overnight duty'; }
+  else if (pr && pr.overnight) { act = R.overnight; why = 'Day after an overnight duty'; }
+  else if (!r) return null;
+  else if (r.duty === 'LAYOVER') { act = R.layover; why = 'Layover' + (r.nightstop ? ' · ' + r.nightstop : ''); }
+  else if (r.duty === 'FLY') { const m = hm(r.report), e = hm(R.earlyReportBefore); if (m == null || e == null || m >= e) return null; act = R.early; why = 'Early report ' + r.report; }
+  else if (r.duty === 'STBH' || r.duty === 'STBA') { act = R[r.duty] || R.standby; why = DUTY[r.duty]; }
+  else return null;
+  if (act == null) return null;
+  const sid = act === 'rest' ? null : act === 'rotation' ? nextSessionId() : P().sessions.some((s) => s.id === act) ? act : null;
+  return { sid, rest: act === 'rest', why };
+}
+/* what a day holds: the coach's schedule entry wins; otherwise the roster suggestion, marked auto */
+function dayPlan(d) { const sd = schedDay(d); if (sd) return sd; const ap = autoPlan(d); return ap ? { sid: ap.sid, note: ap.why, auto: true, rest: ap.rest } : null; }
+function dutyTag(d) {
+  const r = rosterDay(d); if (!r || !DUTY_TAG[r.duty]) return '';
+  const txt = r.duty === 'LAYOVER' && r.nightstop ? String(r.nightstop).slice(0, 4) : DUTY_TAG[r.duty];
+  return `<span class="dt ${r.duty.toLowerCase()}">${esc(txt)}</span>`;
+}
+function dutyRow(d) {
+  const r = rosterDay(d), k = ymd(d);
+  if (!r) return `<button class="loc duty" data-a="dutySheet" data-d="${k}">${ic('plane', 18, 2, 'style="color:var(--mute)"')}<span class="grow mute" style="font-size:14px">No duty on the roster · tap to add</span><span class="mute">${ic('edit', 16)}</span></button>`;
+  let main = DUTY[r.duty] || r.duty;
+  if (r.duty === 'LAYOVER' && r.nightstop) main += ' · ' + r.nightstop;
+  const standby = r.duty === 'STBH' || r.duty === 'STBA';
+  if (r.report) main += standby ? ` · ${r.report}${r.off ? '–' + r.off : ''}` : ` · report ${r.report}`;
+  const sub = [];
+  const lb = r.report && ['FLY', 'STBA', 'LAYOVER'].includes(r.duty) ? leaveBy(r) : null;
+  if (lb) sub.push(`<span class="leave">Leave by ${lb}</span>`);
+  const sec = sectorsText(r); if (sec) sub.push(esc(sec));
+  if (r.off && !standby) sub.push(`off ${esc(r.off)}${r.overnight ? ' next day' : ''}`);
+  else if (r.overnight) sub.push('overnight');
+  return `<button class="loc duty" data-a="dutySheet" data-d="${k}" aria-label="Duty: ${esc(main)}. Change duty">${ic('plane', 18, 2, `style="color:var(--${r.duty === 'OFF' ? 'mute' : 'amber'})"`)}<span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(main)}</span>${sub.length ? `<span class="small mute" style="display:block;margin-top:2px">${sub.join(' · ')}</span>` : ''}</span><span class="mute">${ic('edit', 16)}</span></button>`;
+}
 function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
 const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
 const calBtn = () => `<button class="iconbtn sm calbtn ${S.cal === 'month' ? 'on' : ''}" data-a="calMode" aria-label="${S.cal === 'month' ? 'Show one week' : 'Show the whole month'}" aria-pressed="${S.cal === 'month'}">${ic('cal', 16)}</button>`;
@@ -375,8 +429,8 @@ function weekStrip(t0, sel) {
   let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span><button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button>${calBtn()}</div><div class="week">`;
   for (let i = 0; i < 7; i++) {
     const d = new Date(ws); d.setDate(ws.getDate() + i);
-    const sd = schedDay(d), done = loggedOn(d).length, k = ymd(d);
-    h += `<button class="day ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}"><span class="dl">${DOW[d.getDay()][0]}</span><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${done ? '<i class="done"></i>' : ''}</button>`;
+    const sd = dayPlan(d), done = loggedOn(d).length, k = ymd(d);
+    h += `<button class="day ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''} ${sd && sd.auto ? 'auto' : ''}" data-a="selDay" data-d="${k}"><span class="dl">${DOW[d.getDay()][0]}</span><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${dutyTag(d)}${done ? '<i class="done"></i>' : ''}</button>`;
   }
   return h + '</div>';
 }
@@ -389,8 +443,8 @@ function monthGrid(t0, sel) {
     <div class="month">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span class="mdow">${x}</span>`).join('')}`;
   for (let i = 0; i < weeks * 7; i++) {
     const d = new Date(gs); d.setDate(gs.getDate() + i);
-    const sd = schedDay(d), done = loggedOn(d).length, k = ymd(d), out = d.getMonth() !== m0.getMonth();
-    h += `<button class="mday ${out ? 'out' : ''} ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''}" data-a="selDay" data-d="${k}" aria-label="${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}${sd ? ' · ' + dayLabel(sd) : ''}${done ? ' · logged' : ''}"><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${done ? '<i class="done"></i>' : ''}</button>`;
+    const sd = dayPlan(d), done = loggedOn(d).length, k = ymd(d), out = d.getMonth() !== m0.getMonth(), rd = rosterDay(d);
+    h += `<button class="mday ${out ? 'out' : ''} ${k === ymd(sel) ? 'on' : ''} ${k === ymd(t0) ? 'today' : ''} ${sd && sd.sid ? 'lift' : ''} ${sd && sd.auto ? 'auto' : ''}" data-a="selDay" data-d="${k}" aria-label="${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}${rd ? ' · ' + (DUTY[rd.duty] || rd.duty) : ''}${sd ? ' · ' + dayLabel(sd) + (sd.auto ? ' (auto)' : '') : ''}${done ? ' · logged' : ''}"><span class="dn">${d.getDate()}</span><span class="lb">${dayLabel(sd)}</span>${dutyTag(d)}${done ? '<i class="done"></i>' : ''}</button>`;
   }
   return h + '</div>';
 }
@@ -411,15 +465,16 @@ function vToday() {
   h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
   h += weekStrip(t0, sel);
 
-  const sd = schedDay(sel);
-  const planned = sd ? sd.sid : (isToday ? nextSessionId() : null);
+  const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: ap.why } : null);
+  const planned = sd0 ? sd0.sid : ap ? ap.sid : (isToday ? nextSessionId() : null);
   const sid = S.pick || planned;
   const doneLogs = loggedOn(sel);
   const g = gym();
   const extra = sd && (sd.note || sd.other) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${sd.other ? `<span class="mute">Also: ${esc(sd.other)}</span>` : ''}</div>` : '';
 
   if (!sid) {
-    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>No lifting planned</h2>${extra}</div>
+    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ap ? '<span class="tag auto">AUTO</span>' : ''}${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>${ap && ap.rest ? 'Rest day' : 'No lifting planned'}</h2>${extra}</div>
+      ${dutyRow(sel)}<div style="height:12px"></div>
       ${doneLogs.length ? `<div style="padding:0 20px 16px" class="small acc">Logged: ${doneLogs.map((l) => esc(l.name)).join(', ')}</div>` : ''}</div>`;
   } else {
     const s = session(sid);
@@ -436,8 +491,9 @@ function vToday() {
     }
     const swaps = items.filter((x) => x.r.swapped).length;
     const isDone = doneLogs.some((l) => l.sid === sid);
-    const tag = S.pick && S.pick !== planned ? '<span class="tag amb">YOUR PICK</span>' : sd && sd.sid ? `<span class="tag acc">PLANNED ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : '<span class="tag">UP NEXT</span>';
+    const tag = S.pick && S.pick !== planned ? '<span class="tag amb">YOUR PICK</span>' : ap ? `<span class="tag auto">AUTO ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : sd && sd.sid ? `<span class="tag acc">PLANNED ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : '<span class="tag">UP NEXT</span>';
     h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${s.quick ? ` · ${s.blocks[0].items.length} exercises × ${s.blocks[0].items[0] ? s.blocks[0].items[0].sets : 2} rounds · ${s.focus === 'snack' ? 'changes daily' : '10 s between, 45 s after each round'}` : (P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
+      ${dutyRow(sel)}
       <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
       <ol class="exlist">${blocks.join('')}</ol>
       ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
@@ -884,6 +940,35 @@ function vGymSheet(id) {
     ${id ? `<button class="btn danger sm" data-a="archiveGym" data-g="${esc(id)}" style="margin-top:10px">Archive (hotel changed)</button>` : ''}`;
 }
 
+/* ---------- duty changed sheet ---------- */
+const DUTY_KEYS = ['report', 'off', 'sectors', 'nightstop', 'overnight'];
+function vDutySheet(k) {
+  const cur = (S.data.roster && S.data.roster.days && S.data.roster.days[k]) || null;
+  if (!S.dutyDraft || S.dutyDraft._for !== k) S.dutyDraft = { duty: 'FLY', report: '', off: '', sectors: 0, nightstop: '', overnight: false, ...(cur || {}), _for: k, _had: !!cur };
+  const d = S.dutyDraft, dt = parseD(k), standby = d.duty === 'STBH' || d.duty === 'STBA';
+  const codes = [...new Set(gyms().filter((x) => !x.archived).map((x) => x.airport).filter(Boolean))];
+  const n = sectorCount(d.sectors), lb = d.report && ['FLY', 'STBA', 'LAYOVER'].includes(d.duty) ? leaveBy(d) : null;
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">${DOW[dt.getDay()]} ${dt.getDate()} ${MON[dt.getMonth()]}</div><h3>Duty changed</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
+    <div class="field">Duty<div class="dchoice">${Object.keys(DUTY).map((x) => `<button class="${d.duty === x ? 'on' : ''}" data-a="dutySet" data-k="duty" data-v="${x}" aria-pressed="${d.duty === x}">${DUTY[x]}</button>`).join('')}</div></div>
+    ${d.duty === 'OFF' ? '' : `<div class="row" style="gap:10px;align-items:flex-start"><label class="field grow">${standby ? 'Standby from' : 'Report'}<input id="dReport" type="time" value="${esc(d.report || '')}"></label><label class="field grow">${standby ? 'Standby until' : 'Off duty'}<input id="dOff" type="time" value="${esc(d.off || '')}"></label></div>
+    ${lb ? `<div class="small" style="margin:-4px 2px 12px;color:var(--amber);font-weight:600">Leave by ${lb}</div>` : ''}`}
+    ${d.duty === 'FLY' || d.duty === 'LAYOVER' ? `<div class="field">Sectors<div class="stepper" style="background:var(--raise)"><button data-a="dutySet" data-k="sectors" data-v="-1" aria-label="Fewer sectors">−</button><span class="val"><b style="font-family:'Space Grotesk',Inter,sans-serif;font-size:24px;color:var(--text)">${n}</b><small>SECTORS</small></span><button data-a="dutySet" data-k="sectors" data-v="1" aria-label="More sectors">+</button></div></div>` : ''}
+    ${d.duty === 'LAYOVER' ? `<div class="field">Nightstop<input id="dStop" value="${esc(d.nightstop || '')}" maxlength="4" placeholder="Airport code" autocapitalize="characters" style="text-transform:uppercase">${codes.length ? `<div class="dchoice" style="margin-top:6px">${codes.map((c) => `<button class="${String(d.nightstop || '').toUpperCase() === c ? 'on' : ''}" data-a="dutySet" data-k="nightstop" data-v="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}</div>` : ''}
+    ${d.duty === 'OFF' ? '' : `<button class="toggle" data-a="dutySet" data-k="overnight" style="margin-bottom:12px"><span>Overnight duty (finishes the next day)</span><span class="sw ${d.overnight ? 'on' : ''}"></span></button>`}
+    <button class="btn" data-a="dutySave">Save duty</button>
+    ${d._had ? '<button class="btn danger sm" data-a="dutyClear" style="margin-top:10px">Remove from roster</button>' : ''}
+    <div class="small mute" style="margin-top:12px;line-height:1.4">Saving updates the roster and re-plans days the schedule leaves open.</div>`;
+}
+function dutyCapture(dr) { const r = $('#dReport'), o = $('#dOff'), s = $('#dStop'); if (r) dr.report = r.value; if (o) dr.off = o.value; if (s) dr.nightstop = s.value.trim().toUpperCase(); }
+function writeRoster(k, entry) {
+  const ro = S.data.roster && S.data.roster.days ? S.data.roster : { days: {} };
+  if (entry) ro.days[k] = entry; else delete ro.days[k];
+  ro.updated = new Date().toISOString();
+  S.data.roster = ro; save('data');
+  enqueue({ kind: 'file', name: 'roster', data: ro });
+  S.pick = null; closeSheet(); render(); // autoPlan runs again on render
+}
+
 /* ---------- view: settings ---------- */
 function vSettings() {
   const c = S.cfg;
@@ -912,10 +997,10 @@ function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#shee
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
   if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet();
-  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg);
+  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg); else if (kind === 'duty') h = vDutySheet(arg);
   $('#sheet').innerHTML = h;
 }
-function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
+function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.dutyDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
 let toastT = null;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2400); }
 
@@ -966,6 +1051,25 @@ const A = {
   setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.stack = []; S.view = 'today'; render(); },
   setGymHere(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
+  dutySheet(d) { S.dutyDraft = null; openSheet('duty', d.d); },
+  dutySet(d) {
+    const dr = S.dutyDraft; if (!dr) return; dutyCapture(dr);
+    if (d.k === 'duty') dr.duty = d.v;
+    else if (d.k === 'sectors') dr.sectors = Math.max(0, Math.min(8, sectorCount(dr.sectors) + +d.v));
+    else if (d.k === 'overnight') dr.overnight = !dr.overnight;
+    else if (d.k === 'nightstop') dr.nightstop = d.v;
+    renderSheet();
+  },
+  dutySave() {
+    const dr = S.dutyDraft; if (!dr) return; dutyCapture(dr);
+    const cur = (S.data.roster && S.data.roster.days && S.data.roster.days[dr._for]) || {};
+    const e = { ...cur, duty: dr.duty }; DUTY_KEYS.forEach((x) => delete e[x]); // keep fields the app does not manage
+    if (dr.duty !== 'OFF') { if (dr.report) e.report = dr.report; if (dr.off) e.off = dr.off; if (dr.overnight) e.overnight = true; }
+    if ((dr.duty === 'FLY' || dr.duty === 'LAYOVER') && sectorCount(dr.sectors)) e.sectors = dr.sectors;
+    if (dr.duty === 'LAYOVER' && dr.nightstop) e.nightstop = dr.nightstop.slice(0, 4);
+    writeRoster(dr._for, e); toast('Duty saved · plan updated');
+  },
+  dutyClear() { const dr = S.dutyDraft; if (!dr) return; writeRoster(dr._for, null); toast('Removed from roster'); },
   gymUnit(d) {
     const dr = S.gymDraft; if (!dr || (d.u === 'lb') === (U() === 'lb')) return;
     dr.name = $('#gName').value; dr.airport = $('#gAirport').value; dr.group = $('#gGroup').value; dr.maxDB = gymMaxKg(dr);
@@ -998,7 +1102,7 @@ const A = {
     location.replace(location.pathname + '?u=' + Date.now());
   },
   export() { const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), data: S.data, logs: S.logs, queue: S.queue }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `train-backup-${ymd(new Date())}.json`; document.body.appendChild(a); a.click(); a.remove(); },
-  reset() { if (!S.confirmReset) { S.confirmReset = true; render(); setTimeout(() => { S.confirmReset = false; }, 5000); return; } if (S.queue.length) { toast(`${S.queue.length} changes not synced yet – sync first`); S.confirmReset = false; render(); return; } for (const k of ['data', 'logs', 'queue', 'active', 'lastSync']) localStorage.removeItem('tr_' + k); location.reload(); },
+  reset() { if (!S.confirmReset) { S.confirmReset = true; render(); setTimeout(() => { S.confirmReset = false; }, 5000); return; } if (S.queue.length) { toast(`${S.queue.length} changes not synced yet – sync first`); S.confirmReset = false; render(); return; } for (const k of ['data', 'logs', 'queue', 'active', 'lastSync', 'devfiles']) localStorage.removeItem('tr_' + k); location.reload(); },
 };
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-a]'); if (!el) return;
@@ -1033,7 +1137,7 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
   let x0 = null, y0 = 0, dx = 0, dy = 0, mode = null, el = null;
   document.addEventListener('touchstart', (e) => {
     x0 = null;
-    if (!BACKABLE.includes(S.view) || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, .week')) return;
+    if (!BACKABLE.includes(S.view) || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, .week, .month')) return;
     if (S.view === 'settings' && !(S.data && S.data.programme)) return;
     if (S.view === 'session' && e.touches[0].clientX > 32) return; // in a workout only an edge swipe goes back
     el = $('#app > .view'); if (!el) return;

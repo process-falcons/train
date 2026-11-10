@@ -204,6 +204,17 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .day.on{background:var(--raise);box-shadow:inset 0 0 0 1.5px var(--accent)}
 .day .done{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:4px;background:var(--accent)}
 .weekhead{gap:6px}
+.day{padding:0 2px}
+/* roster: duty markers, auto suggestions, duty row and sheet */
+.dt{display:block;margin-top:1px;font-size:8px;font-weight:800;letter-spacing:.04em;line-height:1;padding:2px 3px;border-radius:4px;background:var(--amber-tint);color:var(--amber);max-width:100%;overflow:hidden;white-space:nowrap}
+.dt.stbh,.dt.stba{background:var(--raise);color:var(--soft)}
+.day.auto .lb,.mday.auto .lb{opacity:.6}
+.tag.auto{background:transparent;box-shadow:inset 0 0 0 1px var(--line2);color:var(--soft)}
+.loc.duty{margin-bottom:8px;min-height:56px;padding:8px 12px}
+.duty .leave{color:var(--amber);font-weight:700}
+.dchoice{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:4px}
+.dchoice button{min-height:44px;padding:0 6px;border-radius:12px;background:var(--raise);color:var(--soft);font-size:14px;font-weight:600}
+.dchoice button.on{background:var(--accent);color:var(--accent-ink)}
 .herepill{align-self:flex-start;min-height:44px;max-width:100%;padding:0 14px 0 12px;border-radius:22px;background:var(--card);display:inline-flex;align-items:center;gap:7px;font-size:14px;white-space:nowrap;overflow:hidden}
 .herepill b{font-weight:600;overflow:hidden;text-overflow:ellipsis}
 .calbtn.on{background:var(--accent-tint);color:var(--accent)}
