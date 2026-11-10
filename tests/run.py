@@ -88,9 +88,13 @@ def t_basics(page):
     check("Today shows the planned session", page.locator(".hero h2").inner_text() == "Lower + pull")
     check("planned session is tagged PLANNED", page.locator(".hero .tag").first.inner_text().startswith("PLANNED"))
     check("location button on Today", "Home gym" in page.locator(".herepill").inner_text())
-    rd = page.locator(".ready")
-    check("readiness on Today: sleep, RHR and HRV vs the last 7 days", rd.count() == 1 and all(x in rd.inner_text() for x in ("Sleep 4 h 36", "score 51", "RHR 55 (+6)", "HRV 48 (-22%)")), rd.inner_text() if rd.count() else "missing")
-    check("short night + raised RHR + low HRV: take it easier", "tired" in (rd.get_attribute("class") or "") and "Take it easier" in rd.inner_text())
+    rc = page.locator(".card.rec")
+    txt = rc.inner_text() if rc.count() else "missing"
+    score = page.evaluate("recovery('2030-01-08')")
+    check("recovery card on Today: score, HRV/RHR/sleep vs baseline", rc.count() == 1 and str(score["score"]) in txt and "HRV" in txt and "RHR" in txt and "Sleep" in txt, txt)
+    check("bad night scores red with easy-day advice", score["band"] == "red" and "red" in (rc.get_attribute("class") or "") and "Make it easy" in txt, (score["score"], score["band"]))
+    check("normal night scores green", page.evaluate("recovery('2030-01-06').band") == "green", page.evaluate("recovery('2030-01-06').score"))
+    check("too few nights: baseline still building", page.evaluate("recovery('2029-12-12').hrv") is None)
     check("lime labels really are lime", page.evaluate("getComputedStyle(document.querySelector('.label.acc') || document.body).color") in ("rgb(198, 244, 50)",)
           or page.locator(".label.acc").count() == 0)
     check("no sideways scrolling on Today", page.evaluate("document.scrollingElement.scrollWidth <= innerWidth"))
@@ -111,8 +115,28 @@ def t_basics(page):
     pick_day(page, "2030-01-08")
     check("day off: no duty line (the schedule note already says so)", page.locator(".loc.duty").count() == 0)
     pick_day(page, "2030-01-10")
-    check("readiness only shows for today", page.locator(".ready").count() == 0)
+    check("future day: no recovery card", page.locator(".card.rec").count() == 0)
+    check("header follows the selected day", page.locator(".head h1").inner_text() == "Thursday" and "10 Jan" in page.locator(".head .sub").inner_text())
+    check("Today button shows when away from today", page.locator(".todaybtn").count() == 1)
     check("no roster entry: no duty line and no prompt", page.locator(".loc.duty").count() == 0)
+    page.locator(".todaybtn").tap(); wait(page)
+    check("Today button jumps back", page.locator(".head h1").inner_text() == "Today" and page.locator(".todaybtn").count() == 0)
+    box = page.locator(".hero").bounding_box()
+    def swipe(x1, x2):
+        y = box["y"] + 20
+        page.evaluate("""([x1, x2, y]) => { const el = document.querySelector('.hero');
+          const ev = (type, x) => { const e = new Event(type, { bubbles: true, cancelable: true }); const pt = [{ identifier: 1, target: el, clientX: x, clientY: y }];
+            Object.defineProperty(e, 'touches', { value: type === 'touchend' ? [] : pt }); Object.defineProperty(e, 'changedTouches', { value: pt }); return e; };
+          el.dispatchEvent(ev('touchstart', x1));
+          for (let i = 1; i <= 6; i++) el.dispatchEvent(ev('touchmove', x1 + (x2 - x1) * i / 6));
+          el.dispatchEvent(ev('touchend', x2)); }""", [x1, x2, y])
+        wait(page, 450)
+    swipe(300, 80)
+    check("swipe left: next day", page.locator(".head h1").inner_text() == "Tomorrow", page.locator(".head h1").inner_text())
+    swipe(80, 300); swipe(80, 300)
+    check("swipe right twice: yesterday", page.locator(".head h1").inner_text() == "Yesterday", page.locator(".head h1").inner_text())
+    check("week strip follows the swiped day", page.locator(".day.on").get_attribute("data-d") == "2030-01-07")
+    page.locator(".todaybtn").tap(); wait(page, 500)
     pick_day(page, "2030-01-08")
     shot(page, "today")
 
@@ -146,6 +170,7 @@ def t_workout(page):
     ff = page.locator(".fitrow:has-text('Fitness & fatigue')")
     check("Fitness: fitness/fatigue/form from intervals.icu", ff.count() == 1 and "form" in ff.inner_text() and ff.locator("polyline").count() == 2, ff.inner_text() if ff.count() else "missing")
     check("Fitness: intervals.icu estimated FTP beside COROS FTP", "eFTP 252" in fit.inner_text())
+    check("Fitness: 30-day recovery strip", page.locator(".fitrow:has-text('Recovery') svg rect").count() >= 20)
     check("Fitness: sleep, resting HR and HRV trends", all(page.locator(f".fitrow:has-text('{x}')").count() == 1 for x in ("Sleep", "Resting heart rate", "HRV")))
     check("same-day weight: the one logged in the app wins over Zepp", "79.5 kg" in page.locator(".card:has-text('Body')").first.inner_text())
     check("Zepp weight used when the app has none that day", page.evaluate("(() => { const k = S.data.body; S.data.body = { entries: [] }; const v = bodyKg(); S.data.body = k; return v; })()") == 78.9)
@@ -222,6 +247,11 @@ def t_layover_gym(browser, p, url):
     pick_day(page, "2030-01-13")
     check("future layover day previews the hotel gym", "Sample hotel ORD" in page.locator(".loc:not(.duty)").inner_text())
     check("…while today's location is unchanged", "Home gym" in page.locator(".herepill").inner_text())
+    pick_day(page, "2030-01-11")
+    page.evaluate("document.querySelector('[data-a=\"genQuick\"][data-keep]').scrollIntoView({block:'center'})"); wait(page, 200)
+    y0 = page.evaluate("scrollY")
+    page.locator('[data-a="genQuick"][data-keep]').tap(); wait(page, 400)
+    check("shuffle keeps your scroll position", y0 > 100 and abs(page.evaluate("scrollY") - y0) < 5, (y0, page.evaluate("scrollY")))
     ctx.close()
 
 

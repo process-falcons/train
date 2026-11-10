@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio'];
@@ -524,31 +524,50 @@ function cardioCards(items, k) {
 }
 /* ---------- recovery: sleep, resting HR, HRV (Zepp → intervals.icu → cardio.json "health") ---------- */
 const healthDays = () => (S.data.cardio && Array.isArray(S.data.cardio.health) ? S.data.cardio.health : []);
-function readiness(k) {
+const hrs = (h) => `${Math.floor(h)} h ${pad(Math.round((h % 1) * 60))}`;
+/* recovery score 0–100: HRV vs your own 30-day baseline (half), resting HR vs baseline (quarter), sleep (quarter).
+   Green ≥ 67 · amber 34–66 · red ≤ 33. A component needs 5 earlier days to count; missing ones are left out and the rest re-weighted. */
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function recovery(k) {
   const H = healthDays(), i = H.findIndex((x) => x.date === k);
   if (i < 0) return null;
-  const d = H[i], prev = H.slice(Math.max(0, i - 7), i);
-  const base = (f) => { const v = prev.map((x) => x[f]).filter((x) => x != null); return v.length >= 3 ? avg(v) : null; };
-  const out = { d, flags: [] };
-  if (d.sleep != null) out.sleep = d.sleep;
-  const rb = base('rhr'); if (d.rhr != null && rb != null) out.rhrDiff = Math.round(d.rhr - rb);
-  const hb = base('hrv'); if (d.hrv != null && hb != null) out.hrvPct = Math.round(((d.hrv - hb) / hb) * 100);
-  if (out.sleep != null && out.sleep < 6) out.flags.push('short sleep');
-  if (out.rhrDiff != null && out.rhrDiff >= 5) out.flags.push('resting HR up');
-  if (out.hrvPct != null && out.hrvPct <= -15) out.flags.push('HRV down');
-  return out;
+  const d = H[i], prev = H.slice(0, i).filter((x) => parseD(k) - parseD(x.date) <= 30 * DAY);
+  const series = (f, sameType) => prev.filter((x) => x[f] != null && (!sameType || (x.hrvType || 'sdnn') === (d.hrvType || 'sdnn'))).map((x) => x[f]);
+  const parts = [], need = 5;
+  const hv = series('hrv', true);
+  let hrv = null;
+  if (d.hrv != null && hv.length >= need) {
+    const L = hv.map(Math.log), mu = avg(L), sd = Math.max(0.06, Math.sqrt(avg(L.map((x) => (x - mu) ** 2))));
+    const z = (Math.log(d.hrv) - mu) / sd;
+    hrv = { z, pct: Math.round((d.hrv / Math.exp(mu) - 1) * 100), score: clamp(60 + 25 * z, 0, 100), base: Math.round(Math.exp(mu)) };
+    parts.push([hrv.score, 0.5]);
+  }
+  const rv = series('rhr');
+  let rhr = null;
+  if (d.rhr != null && rv.length >= need) { const diff = d.rhr - avg(rv); rhr = { diff: Math.round(diff), score: clamp(60 - 8 * diff, 0, 100) }; parts.push([rhr.score, 0.25]); }
+  let sleep = null;
+  if (d.sleepScore != null) sleep = { score: clamp(d.sleepScore, 0, 100) };
+  else if (d.sleep != null) sleep = { score: clamp(((d.sleep - 4) / 4) * 100, 0, 100) };
+  if (sleep) parts.push([sleep.score, 0.25]);
+  const w = parts.reduce((n, [, x]) => n + x, 0);
+  const score = hrv || parts.length >= 2 ? Math.round(parts.reduce((n, [v, x]) => n + v * x, 0) / w) : null;
+  const band = score == null ? null : score >= 67 ? 'green' : score >= 34 ? 'amber' : 'red';
+  return { d, score, band, hrv, rhr, sleep, hrvNights: hv.length, need };
 }
-const hrs = (h) => `${Math.floor(h)} h ${pad(Math.round((h % 1) * 60))}`;
-function readinessRow(k) {
-  const r = readiness(k); if (!r) return '';
-  const parts = [];
-  if (r.sleep != null) parts.push(`<span${r.sleep < 6 ? ' class="warn"' : ''}>Sleep ${hrs(r.sleep)}${r.d.sleepScore ? ` · score ${r.d.sleepScore}` : ''}</span>`);
-  if (r.d.rhr != null) parts.push(`<span${r.rhrDiff >= 5 ? ' class="warn"' : ''}>RHR ${r.d.rhr}${r.rhrDiff != null && r.rhrDiff !== 0 ? ` (${r.rhrDiff > 0 ? '+' : ''}${r.rhrDiff})` : ''}</span>`);
-  if (r.d.hrv != null) parts.push(`<span${r.hrvPct <= -15 ? ' class="warn"' : ''}>HRV ${r.d.hrv}${r.hrvPct != null ? ` (${r.hrvPct > 0 ? '+' : ''}${r.hrvPct}%)` : ''}</span>`);
-  if (!parts.length) return '';
-  const tired = r.flags.length >= 2 || (r.sleep != null && r.sleep < 5);
-  const msg = tired ? 'Take it easier today – a lighter session or the snack is fine.' : r.flags.length ? 'One sign of fatigue – warm up well and see how it feels.' : '';
-  return `<div class="ready ${tired ? 'tired' : r.flags.length ? 'meh' : ''}" role="note" aria-label="Recovery">${ic('moon', 18, 2)}<div class="grow"><div class="ready-l">${parts.join('<i>·</i>')}</div>${msg ? `<div class="small" style="margin-top:2px">${msg}</div>` : ''}</div></div>`;
+const BAND = { green: ['var(--accent)', 'Ready', 'Train as planned.'], amber: ['var(--amber)', 'Moderate', 'Train, but keep the hard parts in check.'], red: ['var(--red)', 'Low', 'Make it easy today – a light session, the snack or rest.'] };
+function recoveryCard(k, isToday) {
+  const r = recovery(k); if (!r) return '';
+  const [col, label, advice] = r.score == null ? ['var(--dim)', 'Building baseline', ''] : BAND[r.band];
+  const c = 2 * Math.PI * 27, f = r.score == null ? 0 : r.score / 100;
+  const ring = `<div class="rec-ring"><svg width="66" height="66" viewBox="0 0 66 66" aria-hidden="true"><circle cx="33" cy="33" r="27" fill="none" stroke="#1C2027" stroke-width="6"/><circle cx="33" cy="33" r="27" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 33 33)"/></svg><b style="color:${r.score == null ? 'var(--mute)' : col}">${r.score == null ? '–' : r.score}</b></div>`;
+  const sgn = (v) => (v > 0 ? '+' : '') + v;
+  const bits = [];
+  if (r.d.hrv != null) bits.push(`<span>HRV <b>${r.d.hrv}</b>${r.hrv ? ` <i style="color:${r.hrv.z < -1 ? 'var(--amber)' : r.hrv.z > 0.5 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.hrv.pct)}%</i>` : ''}</span>`);
+  if (r.d.rhr != null) bits.push(`<span>RHR <b>${r.d.rhr}</b>${r.rhr && r.rhr.diff ? ` <i style="color:${r.rhr.diff >= 4 ? 'var(--amber)' : r.rhr.diff <= -2 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.rhr.diff)}</i>` : ''}</span>`);
+  if (r.d.sleep != null) bits.push(`<span>Sleep <b>${hrs(r.d.sleep)}</b>${r.d.sleepScore ? ` <i>${r.d.sleepScore}</i>` : ''}</span>`);
+  const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? 'No HRV for this night yet.' : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
+  return `<div class="card rec ${r.band || ''}" role="group" aria-label="Recovery ${r.score ?? 'not available'}">${ring}<div class="grow"><div class="row" style="gap:8px;align-items:baseline"><span class="label">${isToday ? 'Recovery' : 'Recovery · ' + shortDate(k)}</span><b class="rec-l" style="color:${col}">${label}</b></div>
+    <div class="rec-bits">${bits.join('')}</div>${advice && isToday ? `<div class="small" style="margin-top:4px;color:var(--soft)">${advice}</div>` : ''}${note}</div></div>`;
 }
 function cardioCard(c, act) {
   return `<div class="card cardio ${act ? 'done' : ''}"><div class="row" style="gap:12px;align-items:flex-start"><span class="cardio-ic">${act ? ic('check', 20, 2.6) : ic(c.sport === 'bike' ? 'bike' : 'pulse', 20, 2)}</span><div class="grow">
@@ -559,7 +578,7 @@ const calBtn = () => `<button class="iconbtn sm calbtn ${S.cal === 'month' ? 'on
 function weekStrip(t0, sel) {
   if (S.cal === 'month') return monthGrid(t0, sel);
   const ws = weekStart(t0); ws.setDate(ws.getDate() + 7 * (S.weekOff || 0));
-  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span><button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button>${calBtn()}</div><div class="week">`;
+  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="weekNav" data-d="-1" aria-label="Previous week">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.weekOff ? (S.weekOff > 0 ? 'Next week' : 'Last week') : 'This week'} · ${ws.getDate()} ${MON[ws.getMonth()]}</span>${todayBtn()}<button class="iconbtn sm" data-a="weekNav" data-d="1" aria-label="Next week">${ic('chev', 16)}</button>${calBtn()}</div><div class="week">`;
   for (let i = 0; i < 7; i++) {
     const d = new Date(ws); d.setDate(ws.getDate() + i);
     const sd = dayPlan(d), done = loggedOn(d).length, k = ymd(d);
@@ -572,7 +591,7 @@ function monthGrid(t0, sel) {
   const m0 = new Date(t0.getFullYear(), t0.getMonth() + (S.monthOff || 0), 1);
   const gs = weekStart(m0), end = new Date(m0.getFullYear(), m0.getMonth() + 1, 0);
   const weeks = Math.ceil((end - gs + DAY) / (7 * DAY));
-  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="monthNav" data-d="-1" aria-label="Previous month">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.monthOff ? '' : 'This month · '}${MONTH[m0.getMonth()]} ${m0.getFullYear()}</span><button class="iconbtn sm" data-a="monthNav" data-d="1" aria-label="Next month">${ic('chev', 16)}</button>${calBtn()}</div>
+  let h = `<div class="weekhead"><button class="iconbtn sm" data-a="monthNav" data-d="-1" aria-label="Previous month">${ic('back', 16)}</button><span class="small mute grow" style="text-align:center">${S.monthOff ? '' : 'This month · '}${MONTH[m0.getMonth()]} ${m0.getFullYear()}</span>${todayBtn()}<button class="iconbtn sm" data-a="monthNav" data-d="1" aria-label="Next month">${ic('chev', 16)}</button>${calBtn()}</div>
     <div class="month">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span class="mdow">${x}</span>`).join('')}`;
   for (let i = 0; i < weeks * 7; i++) {
     const d = new Date(gs); d.setDate(gs.getDate() + i);
@@ -581,6 +600,9 @@ function monthGrid(t0, sel) {
   }
   return h + '</div>';
 }
+function dayTitle(sel, t0) { const n = Math.round((sel - t0) / DAY); return n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n === -1 ? 'Yesterday' : DOW[sel.getDay()]; }
+const awayFromToday = () => !!S.selDay || (S.cal === 'month' ? !!S.monthOff : !!S.weekOff);
+const todayBtn = () => (awayFromToday() ? '<button class="todaybtn" data-a="goToday">Today</button>' : '');
 function vToday() {
   const d = new Date(), t0 = today0();
   const sel = S.selDay ? parseD(S.selDay) : t0;
@@ -588,7 +610,7 @@ function vToday() {
   const selName = isToday ? 'today' : `${DOW[sel.getDay()].slice(0, 3)} ${sel.getDate()} ${MON[sel.getMonth()]}`;
   const ph = phaseNow();
   const ring = ph ? (() => { const c = 2 * Math.PI * 24, f = ph.wk / ph.total; return `<div class="ring-wrap" aria-label="Week ${ph.wk} of ${ph.total} in ${esc(ph.name)}"><svg width="56" height="56" viewBox="0 0 56 56"><circle cx="28" cy="28" r="24" fill="none" stroke="#1C2027" stroke-width="5"/><circle cx="28" cy="28" r="24" fill="none" stroke="var(--accent)" stroke-width="5" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 28 28)"/></svg><div class="lab"><b>${ph.wk}/${ph.total}</b><small>WEEK</small></div></div>`; })() : '';
-  let h = `<div class="view"><div class="head"><div><div class="sub">${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}</div><h1>Today</h1></div><div class="row" style="gap:10px"><button class="iconbtn" data-a="go" data-v="settings" aria-label="Settings">${ic('gear', 20, 2)}</button>${ring}</div></div><div class="stack">`;
+  let h = `<div class="view"><div class="head"><div><div class="sub">${DOW[sel.getDay()]} ${sel.getDate()} ${MON[sel.getMonth()]}</div><h1>${dayTitle(sel, t0)}</h1></div><div class="row" style="gap:10px"><button class="iconbtn" data-a="go" data-v="settings" aria-label="Settings">${ic('gear', 20, 2)}</button>${ring}</div></div><div class="stack">`;
 
   if (S.active) {
     const a = S.active, done = a.items.reduce((n, it) => n + it.sets.filter((s) => s.done).length, 0);
@@ -596,7 +618,7 @@ function vToday() {
   }
   const here = gym(), auto = !!hereAuto();
   h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : auto ? '<span class="small" style="color:var(--amber)">· layover</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
-  if (isToday) h += readinessRow(ymd(t0));
+  if (sel <= t0) h += recoveryCard(ymd(sel), isToday);
   h += weekStrip(t0, sel);
 
   const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: 'Suggested from your roster: ' + ap.why.charAt(0).toLowerCase() + ap.why.slice(1) } : null);
@@ -631,7 +653,7 @@ function vToday() {
       ${dutyRow(sel)}
       <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
       <ol class="exlist">${blocks.join('')}</ol>
-      ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
+      ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}" data-keep="1">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
       <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
   }
 
@@ -1040,6 +1062,14 @@ function vFitness(logs) {
       <svg class="chart" viewBox="0 0 300 70" role="img" aria-label="Fitness and fatigue over 90 days"><polyline points="${line('atl')}" fill="none" stroke="#FF8FA3" stroke-width="1.5" stroke-opacity=".7"/><polyline points="${line('ctl')}" fill="none" stroke="#5AB0FF" stroke-width="2.5" stroke-linecap="round"/></svg>
       <div class="legend"><span><i style="background:#5AB0FF"></i>Fitness</span><span><i style="background:#FF8FA3"></i>Fatigue</span><span>Form = fitness − fatigue</span></div></div>`;
   }
+  // recovery score, last 30 days
+  const RC = healthDays().slice(-30).map((x) => ({ k: x.date, r: recovery(x.date) })).filter((x) => x.r && x.r.score != null);
+  if (RC.length >= 3) {
+    const bw = 300 / 30, col = { green: 'var(--accent)', amber: 'var(--amber)', red: 'var(--red)' };
+    const cnt = (b) => RC.filter((x) => x.r.band === b).length;
+    h += `<div class="fitrow" style="flex-direction:column;align-items:stretch;gap:6px"><div class="row" style="justify-content:space-between"><div><b>Recovery</b><span>last 30 days</span></div><span class="small mute">${cnt('green')} green · ${cnt('amber')} amber · ${cnt('red')} red</span></div>
+      <svg class="chart" viewBox="0 0 300 44" role="img" aria-label="Recovery score per day, last 30 days">${RC.map((x) => { const i = 29 - Math.round((parseD(RC[RC.length - 1].k) - parseD(x.k)) / DAY), hh = Math.max(3, (x.r.score / 100) * 40); return `<rect x="${(i * bw + 1).toFixed(1)}" y="${(42 - hh).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${hh.toFixed(1)}" rx="2" fill="${col[x.r.band]}"/>`; }).join('')}</svg></div>`;
+  }
   // recovery trends, last 30 days
   const HH = healthDays().slice(-30);
   if (HH.length > 7) {
@@ -1182,8 +1212,10 @@ const A = {
   go(d) { S.stack = S.stack || []; if (['today', 'progress', 'plan'].includes(d.v)) S.stack = []; else if (d.v !== S.view) S.stack.push(S.view); S.view = d.v; S.editing = null; render(); toTop(); },
   pick(d) { S.pick = d.s || null; render(); },
   choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
-  genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
-  selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(parseD(d.d)) - weekStart(today0())) / (7 * DAY)); render(); },
+  genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; if (d.keep) { const y = window.scrollY; render(); window.scrollTo(0, y); } else { render(); toTop(); } },
+  selDay(d) { const t = today0(), p = parseD(d.d); S.selDay = d.d === ymd(t) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(p) - weekStart(t)) / (7 * DAY)); S.monthOff = (p.getFullYear() - t.getFullYear()) * 12 + p.getMonth() - t.getMonth(); render(); },
+  shiftDay(d) { const p = S.selDay ? parseD(S.selDay) : today0(); p.setDate(p.getDate() + +d.n); A.selDay({ d: ymd(p) }); },
+  goToday() { S.selDay = null; S.pick = null; S.weekOff = 0; S.monthOff = 0; render(); toTop(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
   monthNav(d) { S.monthOff = (S.monthOff || 0) + +d.d; render(); },
   calMode() {
@@ -1284,6 +1316,38 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 })();
 
 /* screens with a back arrow: swipe right, or pull down from the top, to go back */
+/* Today: swipe left or right anywhere to move a day forward or back */
+(function daySwipe() {
+  let x0 = null, y0 = 0, dx = 0, dy = 0, mode = null, el = null, swallow = 0;
+  document.addEventListener('click', (e) => { if (performance.now() < swallow) { e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener('touchstart', (e) => {
+    x0 = null;
+    if (S.view !== 'today' || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, select')) return;
+    if (e.touches[0].clientX < 20) return; // leave the screen edge alone
+    el = $('#app > .view .stack'); if (!el) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = dy = 0; mode = null;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (x0 == null || mode === 'none') return;
+    dx = e.touches[0].clientX - x0; dy = e.touches[0].clientY - y0;
+    if (!mode) { if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return; mode = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'x' : 'none'; if (mode === 'none') return; el.style.transition = 'none'; }
+    e.preventDefault();
+    el.style.transform = `translateX(${dx * 0.6}px)`; el.style.opacity = String(1 - Math.min(0.4, Math.abs(dx) / 600));
+  }, { passive: false });
+  const end = (e) => {
+    if (x0 == null) return; x0 = null;
+    if (mode !== 'x') { mode = null; return; }
+    if (e.cancelable) e.preventDefault();
+    swallow = performance.now() + 400; mode = null;
+    const go = Math.abs(dx) > 70 ? (dx < 0 ? 1 : -1) : 0;
+    el.style.transition = 'transform .18s var(--ease), opacity .18s';
+    if (!go) { el.style.transform = ''; el.style.opacity = ''; return; }
+    el.style.transform = `translateX(${go > 0 ? -40 : 40}px)`; el.style.opacity = '0';
+    setTimeout(() => { A.shiftDay({ n: go }); const n = $('#app > .view .stack'); if (n) { n.style.transition = 'none'; n.style.transform = `translateX(${go > 0 ? 40 : -40}px)`; n.style.opacity = '0'; requestAnimationFrame(() => { n.style.transition = 'transform .2s var(--ease), opacity .2s'; n.style.transform = ''; n.style.opacity = ''; }); } }, 150);
+  };
+  document.addEventListener('touchend', end, { passive: false }); document.addEventListener('touchcancel', end);
+})();
+
 (function backSwipe() {
   const BACKABLE = ['choose', 'gyms', 'settings', 'session'];
 
@@ -1311,13 +1375,13 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
     el.style.opacity = String(1 - Math.min(0.5, f));
   }, { passive: false });
   let swallowUntil = 0;
-  document.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener('click', (e) => { if (performance.now() < swallowUntil) { e.preventDefault(); e.stopPropagation(); } }, true);
   const end = (e) => {
     if (x0 == null) return;
     x0 = null;
     if (!mode || mode === 'none') return;
     if (e.cancelable) e.preventDefault();
-    swallowUntil = Date.now() + 450;
+    swallowUntil = performance.now() + 450;
     const leave = mode === 'x' ? dx > 90 : dy > 140, from = S.view;
     el.style.transition = 'transform .22s var(--ease), opacity .22s';
     if (leave) { el.style.transform = mode === 'x' ? 'translateX(100%)' : 'translateY(35%)'; el.style.opacity = '0'; setTimeout(() => { if (S.view === from) { if (from === 'session') A.go({ v: 'today' }); else A.back(); } }, 200); }
