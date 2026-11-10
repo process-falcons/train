@@ -19,5 +19,11 @@
    "dateLabel": "1 Jun",
    "kind": "A race"
   }
- ]
+ ],
+ "rosterRules": {
+  "pickupBeforeDeparture": {
+   "ORD": "2:30"
+  },
+  "wakeBeforePickup": "1:00"
+ }
 }

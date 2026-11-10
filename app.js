@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
@@ -409,6 +409,13 @@ function rosterDay(d) { const r = S.data.roster; return r && r.days ? r.days[ymd
 const hm = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
 const hmStr = (min) => { min = ((min % 1440) + 1440) % 1440; return pad(Math.floor(min / 60)) + ':' + pad(min % 60); };
 const leaveBy = (r) => { const m = hm(r && r.report); return m == null ? null : hmStr(m - (+rules().leaveMinutes || 120)); };
+/* flying home from a layover: hotel pickup = departure − that airport's pickupBeforeDeparture; wake-up call = pickup − wakeBeforePickup */
+function pickup(r) {
+  const R = rules(), dep = hm(r.dep), before = hm((R.pickupBeforeDeparture || {})[String(r.nightstop || '').toUpperCase()]);
+  if (dep == null || before == null) return { known: false };
+  const p = dep - before, wake = hm(R.wakeBeforePickup || '1:00') ?? 60;
+  return { known: true, pickup: hmStr(p), wake: hmStr(p - wake) };
+}
 const sectorCount = (s) => (Array.isArray(s) ? s.length : +s || 0);
 function sectorsText(r) {
   const n = sectorCount(r.sectors); if (!n) return '';
@@ -446,8 +453,13 @@ function dutyRow(d) {
   const standby = r.duty === 'STBH' || r.duty === 'STBA';
   if (r.report) main += standby ? ` · ${r.report}${r.off ? '–' + r.off : ''}` : ` · report ${r.report}`;
   const sub = [];
-  const lb = r.report && ['FLY', 'STBA', 'LAYOVER'].includes(r.duty) ? leaveBy(r) : null;
-  if (lb) sub.push(`<span class="leave">Leave by ${lb}</span>`);
+  if (r.duty === 'LAYOVER' && sectorCount(r.sectors)) {
+    const pk = pickup(r);
+    sub.push(pk.known ? `<span class="leave">Wake-up ${pk.wake} · pickup ${pk.pickup}</span>` : `<span>pickup time for ${esc(r.nightstop || 'this airport')} not set</span>`);
+  } else {
+    const lb = r.report && ['FLY', 'STBA'].includes(r.duty) ? leaveBy(r) : null;
+    if (lb) sub.push(`<span class="leave">Leave by ${lb}</span>`);
+  }
   const sec = sectorsText(r); if (sec) sub.push(esc(sec));
   if (r.off && !standby) sub.push(`off ${esc(r.off)}${r.overnight ? ' next day' : ''}`);
   else if (r.overnight) sub.push('overnight');

@@ -157,6 +157,12 @@ def t_roster(page):
     pick_day(page, "2030-01-17")
     check("route shows on the duty line", "ORD-DEN" in page.locator(".loc.duty").inner_text())
     shot(page, "month")
+    pick_day(page, "2030-01-18")
+    d18 = page.locator(".loc.duty").inner_text()
+    check("layover flying home: wake-up and pickup from the airport's pickup time", "Wake-up 14:15 · pickup 15:15" in d18 and "Leave by" not in d18, d18)
+    pick_day(page, "2030-01-21")
+    check("layover at an airport without a pickup time says so", "pickup time for DEN not set" in page.locator(".loc.duty").inner_text(), page.locator(".loc.duty").inner_text())
+    pick_day(page, "2030-01-17")
     check("duty line is information only (no button, no sheet)", page.evaluate("document.querySelector('.loc.duty').tagName") == "DIV"
           and page.locator(".loc.duty [data-a]").count() == 0)
     check("no 'Duty changed' anywhere", "Duty changed" not in page.content())

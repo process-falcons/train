@@ -60,7 +60,28 @@
    "sectors": [
     "ORD-DEN"
    ],
-   "overnight": true
+   "overnight": true,
+   "dep": "17:45"
+  },
+  "2030-01-20": {
+   "duty": "FLY",
+   "report": "11:00",
+   "dep": "12:00",
+   "off": "15:30",
+   "sectors": [
+    "DUB-DEN"
+   ],
+   "nightstop": "DEN"
+  },
+  "2030-01-21": {
+   "duty": "LAYOVER",
+   "nightstop": "DEN",
+   "report": "08:00",
+   "dep": "09:00",
+   "off": "13:00",
+   "sectors": [
+    "DEN-DUB"
+   ]
   }
  }
 }
