@@ -49,7 +49,18 @@
    "sectors": [
     "ORD-DEN",
     "DEN-ORD"
-   ]
+   ],
+   "nightstop": "ORD"
+  },
+  "2030-01-18": {
+   "duty": "LAYOVER",
+   "nightstop": "ORD",
+   "report": "16:45",
+   "off": "05:45",
+   "sectors": [
+    "ORD-DEN"
+   ],
+   "overnight": true
   }
  }
 }

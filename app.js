@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
@@ -419,10 +419,10 @@ function autoPlan(d) {
   const r = rosterDay(d), prev = new Date(d); prev.setDate(d.getDate() - 1);
   const pr = rosterDay(prev), R = rules();
   let act = null, why = '';
-  if (r && r.overnight) { act = R.overnight; why = 'Overnight duty'; }
+  if (r && r.duty === 'LAYOVER') { act = R.layover; why = 'Layover' + (r.nightstop ? ' · ' + r.nightstop : ''); } // waking up away: the hotel session, even before an overnight home
+  else if (r && r.overnight) { act = R.overnight; why = 'Overnight duty'; }
   else if (pr && pr.overnight) { act = R.overnight; why = 'Day after an overnight duty'; }
   else if (!r) return null;
-  else if (r.duty === 'LAYOVER') { act = R.layover; why = 'Layover' + (r.nightstop ? ' · ' + r.nightstop : ''); }
   else if (r.duty === 'FLY') { const m = hm(r.report), e = hm(R.earlyReportBefore); if (m == null || e == null || m >= e) return null; act = R.early; why = 'Early report ' + r.report; }
   else if (r.duty === 'STBH' || r.duty === 'STBA') { act = R[r.duty] || R.standby; why = DUTY[r.duty]; }
   else return null;
@@ -438,10 +438,9 @@ function dutyTag(d) {
   return `<span class="dt ${r.duty.toLowerCase()}">${esc(txt)}</span>`;
 }
 function dutyRow(d) {
-  const r = rosterDay(d), k = ymd(d);
-  // no roster entry: nothing to show or ask. A day off is already in the schedule note, so only a quiet way to record a call-out
-  if (!r) return '';
-  if (r.duty === 'OFF') return `<button class="dutylink" data-a="dutySheet" data-d="${k}">Duty changed?</button>`;
+  const r = rosterDay(d);
+  // the roster comes from the calendar (train-data/tools/roster_import.py); days off are already in the schedule note
+  if (!r || r.duty === 'OFF') return '';
   let main = DUTY[r.duty] || r.duty;
   if (r.duty === 'LAYOVER' && r.nightstop) main += ' · ' + r.nightstop;
   const standby = r.duty === 'STBH' || r.duty === 'STBA';
@@ -452,7 +451,7 @@ function dutyRow(d) {
   const sec = sectorsText(r); if (sec) sub.push(esc(sec));
   if (r.off && !standby) sub.push(`off ${esc(r.off)}${r.overnight ? ' next day' : ''}`);
   else if (r.overnight) sub.push('overnight');
-  return `<button class="loc duty" data-a="dutySheet" data-d="${k}" aria-label="Duty: ${esc(main)}. Change duty">${ic('plane', 18, 2, `style="color:var(--${r.duty === 'OFF' ? 'mute' : 'amber'})"`)}<span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(main)}</span>${sub.length ? `<span class="small mute" style="display:block;margin-top:2px">${sub.join(' · ')}</span>` : ''}</span><span class="mute">${ic('edit', 16)}</span></button>`;
+  return `<div class="loc duty" role="note" aria-label="Duty: ${esc(main)}">${ic('plane', 18, 2, `style="color:var(--${r.duty === 'OFF' ? 'mute' : 'amber'})"`)}<span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(main)}</span>${sub.length ? `<span class="small mute" style="display:block;margin-top:2px">${sub.join(' · ')}</span>` : ''}</span></div>`;
 }
 function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
 const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
@@ -974,35 +973,6 @@ function vGymSheet(id) {
     ${id ? `<button class="btn danger sm" data-a="archiveGym" data-g="${esc(id)}" style="margin-top:10px">Archive (hotel changed)</button>` : ''}`;
 }
 
-/* ---------- duty changed sheet ---------- */
-const DUTY_KEYS = ['report', 'off', 'sectors', 'nightstop', 'overnight'];
-function vDutySheet(k) {
-  const cur = (S.data.roster && S.data.roster.days && S.data.roster.days[k]) || null;
-  if (!S.dutyDraft || S.dutyDraft._for !== k) S.dutyDraft = { duty: 'FLY', report: '', off: '', sectors: 0, nightstop: '', overnight: false, ...(cur || {}), _for: k, _had: !!cur };
-  const d = S.dutyDraft, dt = parseD(k), standby = d.duty === 'STBH' || d.duty === 'STBA';
-  const codes = [...new Set(gyms().filter((x) => !x.archived).map((x) => x.airport).filter(Boolean))];
-  const n = sectorCount(d.sectors), lb = d.report && ['FLY', 'STBA', 'LAYOVER'].includes(d.duty) ? leaveBy(d) : null;
-  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">${DOW[dt.getDay()]} ${dt.getDate()} ${MON[dt.getMonth()]}</div><h3>Duty changed</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
-    <div class="field">Duty<div class="dchoice">${Object.keys(DUTY).map((x) => `<button class="${d.duty === x ? 'on' : ''}" data-a="dutySet" data-k="duty" data-v="${x}" aria-pressed="${d.duty === x}">${DUTY[x]}</button>`).join('')}</div></div>
-    ${d.duty === 'OFF' ? '' : `<div class="row" style="gap:10px;align-items:flex-start"><label class="field grow">${standby ? 'Standby from' : 'Report'}<input id="dReport" type="time" value="${esc(d.report || '')}"></label><label class="field grow">${standby ? 'Standby until' : 'Off duty'}<input id="dOff" type="time" value="${esc(d.off || '')}"></label></div>
-    ${lb ? `<div class="small" style="margin:-4px 2px 12px;color:var(--amber);font-weight:600">Leave by ${lb}</div>` : ''}`}
-    ${d.duty === 'FLY' || d.duty === 'LAYOVER' ? `<div class="field">Sectors<div class="stepper" style="background:var(--raise)"><button data-a="dutySet" data-k="sectors" data-v="-1" aria-label="Fewer sectors">−</button><span class="val"><b style="font-family:'Space Grotesk',Inter,sans-serif;font-size:24px;color:var(--text)">${n}</b><small>SECTORS</small></span><button data-a="dutySet" data-k="sectors" data-v="1" aria-label="More sectors">+</button></div></div>` : ''}
-    ${d.duty === 'LAYOVER' ? `<div class="field">Nightstop<input id="dStop" value="${esc(d.nightstop || '')}" maxlength="4" placeholder="Airport code" autocapitalize="characters" style="text-transform:uppercase">${codes.length ? `<div class="dchoice" style="margin-top:6px">${codes.map((c) => `<button class="${String(d.nightstop || '').toUpperCase() === c ? 'on' : ''}" data-a="dutySet" data-k="nightstop" data-v="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}</div>` : ''}
-    ${d.duty === 'OFF' ? '' : `<button class="toggle" data-a="dutySet" data-k="overnight" style="margin-bottom:12px"><span>Overnight duty (finishes the next day)</span><span class="sw ${d.overnight ? 'on' : ''}"></span></button>`}
-    <button class="btn" data-a="dutySave">Save duty</button>
-    ${d._had ? '<button class="btn danger sm" data-a="dutyClear" style="margin-top:10px">Remove from roster</button>' : ''}
-    <div class="small mute" style="margin-top:12px;line-height:1.4">Saving updates the roster and re-plans days the schedule leaves open.</div>`;
-}
-function dutyCapture(dr) { const r = $('#dReport'), o = $('#dOff'), s = $('#dStop'); if (r) dr.report = r.value; if (o) dr.off = o.value; if (s) dr.nightstop = s.value.trim().toUpperCase(); }
-function writeRoster(k, entry) {
-  const ro = S.data.roster && S.data.roster.days ? S.data.roster : { days: {} };
-  if (entry) ro.days[k] = entry; else delete ro.days[k];
-  ro.updated = new Date().toISOString();
-  S.data.roster = ro; save('data');
-  enqueue({ kind: 'file', name: 'roster', data: ro });
-  S.pick = null; closeSheet(); render(); // autoPlan runs again on render
-}
-
 /* ---------- view: settings ---------- */
 function vSettings() {
   const c = S.cfg;
@@ -1031,10 +1001,10 @@ function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#shee
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
   if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet();
-  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg); else if (kind === 'duty') h = vDutySheet(arg);
+  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg);
   $('#sheet').innerHTML = h;
 }
-function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.dutyDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
+function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
 let toastT = null;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2400); }
 
@@ -1085,25 +1055,6 @@ const A = {
   setGym(d) { S.data.gyms.current = d.g; LS.set('hereSet', ymd(today0())); save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.stack = []; S.view = 'today'; render(); },
   setGymHere(d) { S.data.gyms.current = d.g; LS.set('hereSet', ymd(today0())); save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
-  dutySheet(d) { S.dutyDraft = null; openSheet('duty', d.d); },
-  dutySet(d) {
-    const dr = S.dutyDraft; if (!dr) return; dutyCapture(dr);
-    if (d.k === 'duty') dr.duty = d.v;
-    else if (d.k === 'sectors') dr.sectors = Math.max(0, Math.min(8, sectorCount(dr.sectors) + +d.v));
-    else if (d.k === 'overnight') dr.overnight = !dr.overnight;
-    else if (d.k === 'nightstop') dr.nightstop = d.v;
-    renderSheet();
-  },
-  dutySave() {
-    const dr = S.dutyDraft; if (!dr) return; dutyCapture(dr);
-    const cur = (S.data.roster && S.data.roster.days && S.data.roster.days[dr._for]) || {};
-    const e = { ...cur, duty: dr.duty }; DUTY_KEYS.forEach((x) => delete e[x]); // keep fields the app does not manage
-    if (dr.duty !== 'OFF') { if (dr.report) e.report = dr.report; if (dr.off) e.off = dr.off; if (dr.overnight) e.overnight = true; }
-    if ((dr.duty === 'FLY' || dr.duty === 'LAYOVER') && sectorCount(dr.sectors)) e.sectors = dr.sectors;
-    if (dr.duty === 'LAYOVER' && dr.nightstop) e.nightstop = dr.nightstop.slice(0, 4);
-    writeRoster(dr._for, e); toast('Duty saved · plan updated');
-  },
-  dutyClear() { const dr = S.dutyDraft; if (!dr) return; writeRoster(dr._for, null); toast('Removed from roster'); },
   gymUnit(d) {
     const dr = S.gymDraft; if (!dr || (d.u === 'lb') === (U() === 'lb')) return;
     dr.name = $('#gName').value; dr.airport = $('#gAirport').value; dr.group = $('#gGroup').value; dr.maxDB = gymMaxKg(dr);

@@ -91,9 +91,9 @@ def t_basics(page):
     check("lime labels really are lime", page.evaluate("getComputedStyle(document.querySelector('.label.acc') || document.body).color") in ("rgb(198, 244, 50)",)
           or page.locator(".label.acc").count() == 0)
     check("no sideways scrolling on Today", page.evaluate("document.scrollingElement.scrollWidth <= innerWidth"))
-    check("day off: no duty line, just a quiet 'Duty changed?' link", page.locator(".loc.duty").count() == 0 and page.locator(".dutylink").count() == 1)
+    check("day off: no duty line (the schedule note already says so)", page.locator(".loc.duty").count() == 0)
     pick_day(page, "2030-01-10")
-    check("no roster entry: no duty line and no prompt", page.locator(".loc.duty").count() == 0 and page.locator(".dutylink").count() == 0)
+    check("no roster entry: no duty line and no prompt", page.locator(".loc.duty").count() == 0)
     pick_day(page, "2030-01-08")
     shot(page, "today")
 
@@ -157,25 +157,12 @@ def t_roster(page):
     pick_day(page, "2030-01-17")
     check("route shows on the duty line", "ORD-DEN" in page.locator(".loc.duty").inner_text())
     shot(page, "month")
-    # Duty changed: 10:20 -> 05:30 report makes 17 Jan an early-report snack day
-    page.locator(".loc.duty").tap(); wait(page, 500)
-    small = page.evaluate("[...document.querySelectorAll('#sheet button')].filter(b => b.offsetParent && b.getBoundingClientRect().height < 44).map(b => b.textContent.trim())")
-    check("duty sheet touch targets ≥ 44 px", not small, small)
-    page.locator("#dReport").fill("05:30")
-    page.locator('[data-a="dutySet"][data-k="sectors"][data-v="1"]').tap(); wait(page, 200)
-    check("typed time survives the stepper", page.locator("#dReport").input_value() == "05:30")
-    shot(page, "duty-sheet")
-    page.locator('[data-a="dutySave"]').tap(); wait(page, 800)
+    check("duty line is information only (no button, no sheet)", page.evaluate("document.querySelector('.loc.duty').tagName") == "DIV"
+          and page.locator(".loc.duty [data-a]").count() == 0)
+    check("no 'Duty changed' anywhere", "Duty changed" not in page.content())
     m = month(page)
-    check("edited duty re-plans the day", m["2030-01-17"]["lb"] == "Snack" and m["2030-01-17"]["auto"], m["2030-01-17"])
-    saved = page.evaluate("JSON.parse(localStorage.getItem('tr_devfiles') || '{}').roster.days['2030-01-17']")
-    check("roster write queued and kept", saved.get("report") == "05:30" and saved.get("sectors") == 3, saved)
-    page.reload(); page.wait_for_selector(".mday"); wait(page, 400)
-    check("edit survives a reload", month(page)["2030-01-17"]["lb"] == "Snack")
-    pick_day(page, "2030-01-17")
-    page.locator(".loc.duty").tap(); wait(page, 400)
-    page.locator('[data-a="dutyClear"]').tap(); wait(page, 500)
-    check("remove from roster clears the day", month(page)["2030-01-17"] == {"lb": "", "dt": "", "auto": False})
+    check("layover day with an overnight flight home: hotel session wins", m["2030-01-18"]["lb"] == "Hotel" and m["2030-01-18"]["auto"], m.get("2030-01-18"))
+    check("…and the day after the overnight is rest", m["2030-01-19"]["lb"] == "Rest" and m["2030-01-19"]["auto"], m.get("2030-01-19"))
 
 
 def t_layover_gym(browser, p, url):
