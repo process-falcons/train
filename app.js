@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -531,7 +531,9 @@ function searchResults(ii, q) {
   const a = S.active, it = a.items[ii], g = gym(a.gymId), all = P().exercises;
   q = q.trim().toLowerCase(); if (!q) return '';
   const ids = Object.keys(all).filter((id) => all[id].name.toLowerCase().includes(q) || ((P().patterns || {})[all[id].pattern] || '').toLowerCase().includes(q)).slice(0, 12);
-  return ids.length ? ids.map((id) => swapOpt(ii, id, it, g, esc(((P().patterns || {})[all[id].pattern]) || ''))).join('') : '<div class="small mute" style="padding:6px 4px 10px">No match – tap the button below to log it as a new exercise.</div>';
+  const mine = [...new Set(stats().logs.flatMap((l) => l.sets.map((s) => s.ex)).filter((id) => id.startsWith('custom:') && id.slice(7).toLowerCase().includes(q)))];
+  const out = mine.map((id) => swapOpt(ii, id, it, g, 'Added by you')).concat(ids.map((id) => swapOpt(ii, id, it, g, esc(((P().patterns || {})[all[id].pattern]) || ''))));
+  return out.length ? out.join('') : '<div class="small mute" style="padding:6px 4px 10px">No match – tap the button below to log it as a new exercise.</div>';
 }
 function doSwap(ii, exId) {
   const a = S.active, it = a.items[ii], g = gym(a.gymId);
