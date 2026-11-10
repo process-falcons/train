@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -798,6 +798,7 @@ function vSettings() {
     <div class="card pad" style="margin-top:14px"><div class="label" style="margin-bottom:10px">Data</div>
       <button class="btn ghost sm" data-a="sync">Sync now</button>
       <button class="btn ghost sm" data-a="export" style="margin-top:8px">Export backup</button>
+      <button class="btn ghost sm" data-a="forceUpdate" style="margin-top:8px">Get the latest version</button>
       <button class="btn danger sm" data-a="reset" style="margin-top:8px">${S.confirmReset ? 'Tap again to clear this phone' : 'Clear this phone and reload from GitHub'}</button>
       <div class="small mute" style="margin-top:12px">Version ${APP_VERSION} · ${Object.keys(S.logs).length} sessions on this phone</div></div></div>`;
 }
@@ -870,6 +871,13 @@ const A = {
   unit(d) { S.cfg.unit = d.u === 'lb' ? 'lb' : 'kg'; save('cfg'); if (S.sheet) renderSheet(); render(); toast(S.cfg.unit === 'lb' ? 'Showing pounds – stored as kg' : 'Showing kilograms'); },
   restCfg(d) { S.cfg.rest = Math.max(30, Math.min(300, (S.cfg.rest || 90) + +d.d)); save('cfg'); render(); },
   soundCfg() { S.cfg.sound = !S.cfg.sound; save('cfg'); unlockAudio(); if (S.cfg.sound) chime(); render(); },
+  async forceUpdate() {
+    if (S.active) { toast('Finish your session first'); return; }
+    toast('Updating…');
+    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); } catch (e) { /* ignore */ }
+    try { const keys = await caches.keys(); await Promise.all(keys.filter((k) => k !== 'train-fonts').map((k) => caches.delete(k))); } catch (e) { /* ignore */ }
+    location.replace(location.pathname + '?u=' + Date.now());
+  },
   export() { const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), data: S.data, logs: S.logs, queue: S.queue }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `train-backup-${ymd(new Date())}.json`; document.body.appendChild(a); a.click(); a.remove(); },
   reset() { if (!S.confirmReset) { S.confirmReset = true; render(); setTimeout(() => { S.confirmReset = false; }, 5000); return; } if (S.queue.length) { toast(`${S.queue.length} changes not synced yet – sync first`); S.confirmReset = false; render(); return; } for (const k of ['data', 'logs', 'queue', 'active', 'lastSync']) localStorage.removeItem('tr_' + k); location.reload(); },
 };
