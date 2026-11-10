@@ -1,10 +1,10 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.9.3';
+const APP_VERSION = '1.10.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
-const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
+const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio'];
 const DAY = 86400000;
 
 /* ---------- small helpers ---------- */
@@ -44,6 +44,7 @@ const I = {
   plan: '<path d="M8 3v18M4 7h8M16 3v18M12 15h8"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   bike: '<circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M5.5 17l3.5-7h6.5l3 7M9 10l3 7M12 17h-6.5M14 5.5h2.5l2 4.5"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   plane: '<path d="M10.5 4.5a1.5 1.5 0 0 1 3 0V10l7 4.5v2l-7-2.5v4.5l2 1.5v1.5L12 20.5 8.5 21.5V20l2-1.5V14l-7 2.5v-2l7-4.5z"/>',
   cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
@@ -238,7 +239,13 @@ function generate(focus, rnd) {
 
 /* ---------- history & metrics ---------- */
 function logsSorted() { return Object.values(S.logs).sort((a, b) => (a.start < b.start ? 1 : -1)); }
-function bodyKg() { const e = (S.data.body && S.data.body.entries) || []; return e.length ? e[e.length - 1].kg : null; }
+function weights() {
+  const m = new Map();
+  for (const x of (S.data.cardio && S.data.cardio.health) || []) if (x.weight) m.set(x.date, { date: x.date, kg: x.weight, src: 'zepp' });
+  for (const x of (S.data.body && S.data.body.entries) || []) m.set(x.date, { date: x.date, kg: x.kg });
+  return [...m.values()].sort((p, q) => p.date.localeCompare(q.date));
+}
+function bodyKg() { const e = weights(); return e.length ? e[e.length - 1].kg : null; }
 function score(exId, s) {
   const ex = EX(exId);
   switch (ex.type) {
@@ -492,10 +499,61 @@ function cardioFor(sd) {
   return { items, rest: rest.join(' · ') };
 }
 const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? ((cardioFor(sd).items[0] && SPORT_LABEL[cardioFor(sd).items[0].sport]) || 'Rest') : '';
-function cardioCards(items) {
-  return items.map((c) => `<div class="card cardio"><div class="row" style="gap:12px;align-items:flex-start"><span class="cardio-ic">${ic(c.sport === 'bike' ? 'bike' : 'pulse', 20, 2)}</span><div class="grow">
-    <div class="row" style="gap:6px;flex-wrap:wrap"><span class="tag acc">${esc((c.sport || 'cardio').toUpperCase())}</span>${c.time ? `<span class="tag">${esc(c.time)}</span>` : ''}${c.minutes ? `<span class="tag">${+c.minutes} MIN</span>` : ''}${c.optional ? '<span class="tag auto">OPTIONAL</span>' : ''}</div>
-    <h3>${esc(c.title || 'Cardio')}</h3>${c.detail ? `<div class="small mute" style="font-size:13px;line-height:1.4">${esc(c.detail)}</div>` : ''}</div></div></div>`).join('');
+/* ---------- cardio from intervals.icu (cardio.json, built by train-data/tools/intervals_import.py; COROS syncs there) ---------- */
+const actsSrc = () => (S.data.cardio && /strava/i.test(S.data.cardio.source || '') ? 'Strava' : 'intervals.icu');
+const acts = () => (S.data.cardio && Array.isArray(S.data.cardio.activities) ? S.data.cardio.activities : []);
+const actsOn = (k) => acts().filter((x) => x.date === k && x.sport !== 'strength');   // strength is logged in the app itself
+function actLine(x) {
+  const p = [`${x.minutes} min`];
+  if (x.km >= 0.1) p.push(`${fmtNum(x.km)} km`);
+  if (x.power && (x.np || x.watts)) p.push(`${x.np || x.watts} W`);
+  if (x.hr) p.push(`HR ${x.hr}`);
+  return p.join(' · ');
+}
+/* pair each planned cardio item with that day's activity of the same sport; whatever is left over was unplanned */
+function matchCardio(k, items) {
+  const pool = actsOn(k).slice().reverse(); // earliest first
+  const done = items.map((c) => { const i = pool.findIndex((x) => c.sport === 'cardio' || x.sport === c.sport); return i >= 0 ? pool.splice(i, 1)[0] : null; });
+  return { done, extra: pool };
+}
+function cardioCards(items, k) {
+  const m = matchCardio(k, items);
+  const planned = items.map((c, i) => cardioCard(c, m.done[i]));
+  const extra = m.extra.map((x) => cardioCard({ sport: x.sport, title: x.name || SPORT_LABEL[x.sport] || 'Activity', time: x.start, unplanned: true }, x));
+  return planned.concat(extra).join('');
+}
+/* ---------- recovery: sleep, resting HR, HRV (Zepp → intervals.icu → cardio.json "health") ---------- */
+const healthDays = () => (S.data.cardio && Array.isArray(S.data.cardio.health) ? S.data.cardio.health : []);
+function readiness(k) {
+  const H = healthDays(), i = H.findIndex((x) => x.date === k);
+  if (i < 0) return null;
+  const d = H[i], prev = H.slice(Math.max(0, i - 7), i);
+  const base = (f) => { const v = prev.map((x) => x[f]).filter((x) => x != null); return v.length >= 3 ? avg(v) : null; };
+  const out = { d, flags: [] };
+  if (d.sleep != null) out.sleep = d.sleep;
+  const rb = base('rhr'); if (d.rhr != null && rb != null) out.rhrDiff = Math.round(d.rhr - rb);
+  const hb = base('hrv'); if (d.hrv != null && hb != null) out.hrvPct = Math.round(((d.hrv - hb) / hb) * 100);
+  if (out.sleep != null && out.sleep < 6) out.flags.push('short sleep');
+  if (out.rhrDiff != null && out.rhrDiff >= 5) out.flags.push('resting HR up');
+  if (out.hrvPct != null && out.hrvPct <= -15) out.flags.push('HRV down');
+  return out;
+}
+const hrs = (h) => `${Math.floor(h)} h ${pad(Math.round((h % 1) * 60))}`;
+function readinessRow(k) {
+  const r = readiness(k); if (!r) return '';
+  const parts = [];
+  if (r.sleep != null) parts.push(`<span${r.sleep < 6 ? ' class="warn"' : ''}>Sleep ${hrs(r.sleep)}${r.d.sleepScore ? ` · score ${r.d.sleepScore}` : ''}</span>`);
+  if (r.d.rhr != null) parts.push(`<span${r.rhrDiff >= 5 ? ' class="warn"' : ''}>RHR ${r.d.rhr}${r.rhrDiff != null && r.rhrDiff !== 0 ? ` (${r.rhrDiff > 0 ? '+' : ''}${r.rhrDiff})` : ''}</span>`);
+  if (r.d.hrv != null) parts.push(`<span${r.hrvPct <= -15 ? ' class="warn"' : ''}>HRV ${r.d.hrv}${r.hrvPct != null ? ` (${r.hrvPct > 0 ? '+' : ''}${r.hrvPct}%)` : ''}</span>`);
+  if (!parts.length) return '';
+  const tired = r.flags.length >= 2 || (r.sleep != null && r.sleep < 5);
+  const msg = tired ? 'Take it easier today – a lighter session or the snack is fine.' : r.flags.length ? 'One sign of fatigue – warm up well and see how it feels.' : '';
+  return `<div class="ready ${tired ? 'tired' : r.flags.length ? 'meh' : ''}" role="note" aria-label="Recovery">${ic('moon', 18, 2)}<div class="grow"><div class="ready-l">${parts.join('<i>·</i>')}</div>${msg ? `<div class="small" style="margin-top:2px">${msg}</div>` : ''}</div></div>`;
+}
+function cardioCard(c, act) {
+  return `<div class="card cardio ${act ? 'done' : ''}"><div class="row" style="gap:12px;align-items:flex-start"><span class="cardio-ic">${act ? ic('check', 20, 2.6) : ic(c.sport === 'bike' ? 'bike' : 'pulse', 20, 2)}</span><div class="grow">
+    <div class="row" style="gap:6px;flex-wrap:wrap"><span class="tag acc">${esc((c.sport || 'cardio').toUpperCase())}</span>${act ? '<span class="tag acc">DONE</span>' : ''}${c.time ? `<span class="tag">${esc(c.time)}</span>` : ''}${c.minutes && !act ? `<span class="tag">${+c.minutes} MIN</span>` : ''}${c.optional && !act ? '<span class="tag auto">OPTIONAL</span>' : ''}${c.unplanned ? '<span class="tag auto">EXTRA</span>' : ''}</div>
+    <h3>${esc(c.title || 'Cardio')}</h3>${act ? `<div class="small" style="font-size:13px;color:var(--soft)">${esc(actLine(act))}</div>` : ''}${c.detail && !act ? `<div class="small mute" style="font-size:13px;line-height:1.4">${esc(c.detail)}</div>` : ''}</div></div></div>`;
 }
 const calBtn = () => `<button class="iconbtn sm calbtn ${S.cal === 'month' ? 'on' : ''}" data-a="calMode" aria-label="${S.cal === 'month' ? 'Show one week' : 'Show the whole month'}" aria-pressed="${S.cal === 'month'}">${ic('cal', 16)}</button>`;
 function weekStrip(t0, sel) {
@@ -538,6 +596,7 @@ function vToday() {
   }
   const here = gym(), auto = !!hereAuto();
   h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : auto ? '<span class="small" style="color:var(--amber)">· layover</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
+  if (isToday) h += readinessRow(ymd(t0));
   h += weekStrip(t0, sel);
 
   const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: 'Suggested from your roster: ' + ap.why.charAt(0).toLowerCase() + ap.why.slice(1) } : null);
@@ -576,7 +635,7 @@ function vToday() {
       <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
   }
 
-  h += cardioCards(cx.items);
+  h += cardioCards(cx.items, ymd(sel));
 
   h += `<div class="row" style="gap:8px">${S.pick && S.pick !== planned && planned ? `<button class="btn ghost sm" data-a="pick" data-s="" style="flex:1">Back to plan</button>` : ''}<button class="btn ghost" data-a="go" data-v="choose" style="flex:2;height:56px">${ic('list', 20)}${sid ? 'Choose a different workout' : 'Choose a workout'}</button></div>`;
 
@@ -899,7 +958,7 @@ function vProgress() {
   h += `<div class="card pad"><div class="row" style="justify-content:space-between;margin-bottom:8px"><span class="label">Weekly volume</span><span class="small mute">number = sessions</span></div><svg class="chart" viewBox="0 0 300 132" role="img" aria-label="Weekly training volume for the last 8 weeks">${bars}</svg></div>`;
 
   // body & relative strength
-  const bk = bodyKg(); const be = (S.data.body && S.data.body.entries) || [];
+  const bk = bodyKg(); const be = weights();
   const rel = [];
   const relFor = (id, label) => { const arr = st.byEx[id]; if (!arr || !bk) return; const best = Math.max(...arr.map((x) => x.e1 || 0)); if (best) rel.push(`<div><b>${(best / bk).toFixed(2)}×</b><span>${label}</span></div>`); };
   relFor('leg_press', 'Leg press e1RM'); relFor('weighted_pullup', 'Pull-up e1RM*'); relFor('rdl', 'RDL e1RM');
@@ -908,6 +967,8 @@ function vProgress() {
     <div class="coros" style="margin-top:12px"><div><b>${bk ? fmtNum(W(bk)) + ' ' + U() : '–'}</b><span>Body weight${be.length ? ' · ' + shortDate(be[be.length - 1].date) : ''}</span></div>${rel.join('') || '<div><b>–</b><span>Strength ÷ body weight</span></div>'}${carry ? `<div><b>${fmtNum(W(carry.best.kg))} ${U()}</b><span>Farmer's carry / hand</span></div>` : ''}</div>
     ${be.length > 1 ? `<div style="margin-top:10px">${spark(be.slice(-12).map((x) => W(x.kg)), 300, 36, '#5AB0FF')}</div>` : ''}
     ${rel.length ? '<div class="tiny mute" style="margin-top:8px">*includes body weight</div>' : ''}</div>`;
+
+  h += vFitness(logs);
 
   // lifts
   h += `<div class="chips"><button class="pill ${S.progFilter === 'main' ? 'on' : ''}" data-a="progFilter" data-f="main">Main lifts</button><button class="pill ${S.progFilter === 'all' ? 'on' : ''}" data-a="progFilter" data-f="all">All</button><button class="pill ${S.progFilter === 'hist' ? 'on' : ''}" data-a="progFilter" data-f="hist">History</button></div>`;
@@ -930,6 +991,68 @@ function vProgress() {
   }
   h += `</div></div>`;
   return h;
+}
+/* ---------- fitness: Strava activities + COROS snapshots ---------- */
+const FIT_COL = { bike: 'var(--accent)', run: 'var(--amber)', swim: '#5AB0FF', other: '#8B919C', strength: '#3A4150' };
+const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+function trendText(points, fmt) {   // last 4 weeks vs the 4 weeks before
+  const now = Date.now(), recent = points.filter((p) => now - p.t < 28 * DAY).map((p) => p.v), before = points.filter((p) => now - p.t >= 28 * DAY && now - p.t < 56 * DAY).map((p) => p.v);
+  const r = avg(recent), b = avg(before);
+  if (r == null) return '';
+  if (b == null) return fmt(r);
+  const pct = Math.round(((r - b) / b) * 100);
+  return `${fmt(r)} <span style="color:${pct > 1 ? 'var(--accent)' : pct < -1 ? 'var(--amber)' : 'var(--mute)'}">${pct > 0 ? '+' : ''}${pct}%</span>`;
+}
+function vFitness(logs) {
+  const A = acts(), c = S.data.coros || {};
+  let h = `<div class="card pad"><div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="label">Fitness</span><span class="small mute">${S.data.cardio ? actsSrc() + ' · ' + shortDate(S.data.cardio.updated) : ''}</span></div>`;
+  if (!A.length) h += `<div class="small mute" style="margin-bottom:12px">Rides and runs appear here once intervals.icu is connected (train-data → tools/intervals_import.py).</div>`;
+  else {
+    // weekly hours by sport, last 12 weeks; strength from the app's own logs
+    const ws = weekStart(new Date()), weeks = [];
+    for (let i = 11; i >= 0; i--) { const s0 = new Date(ws); s0.setDate(s0.getDate() - 7 * i); weeks.push({ s: s0, bike: 0, run: 0, swim: 0, other: 0, strength: 0 }); }
+    const wk = (d) => weeks.find((w) => d >= w.s && d < new Date(w.s.getTime() + 7 * DAY));
+    for (const x of A) { if (x.sport === 'strength') continue; const w = wk(parseD(x.date)); if (w) w[FIT_COL[x.sport] ? x.sport : 'other'] += (x.minutes || 0) / 60; }
+    for (const l of logs) { const w = wk(new Date(l.start)); if (w) w.strength += (l.minutes || 0) / 60; }
+    const keys = ['strength', 'other', 'swim', 'run', 'bike'], tot = (w) => keys.reduce((n, k) => n + w[k], 0);
+    const mx = Math.max(1, ...weeks.map(tot)), bw = 300 / 12;
+    const bars = weeks.map((w, i) => { let y = 112; return keys.map((k) => { const hh = (w[k] / mx) * 92; if (hh < 0.5) return ''; y -= hh; return `<rect x="${i * bw + 4}" y="${y.toFixed(1)}" width="${bw - 8}" height="${hh.toFixed(1)}" rx="2" fill="${FIT_COL[k]}"/>`; }).join(''); }).join('');
+    const last = weeks[11], lastH = tot(last);
+    h += `<div class="row" style="justify-content:space-between"><span class="small" style="color:var(--soft)">Hours per week</span><span class="small mute">this week ${fmtNum(lastH)} h</span></div>
+      <svg class="chart" viewBox="0 0 300 118" role="img" aria-label="Training hours per week for 12 weeks, by sport">${bars}</svg>
+      <div class="legend">${[['bike', 'Bike'], ['run', 'Run'], ['swim', 'Swim'], ['other', 'Other'], ['strength', 'Strength']].map(([k, l]) => `<span><i style="background:${FIT_COL[k]}"></i>${l}</span>`).join('')}</div>`;
+    // aerobic trends: watts per heartbeat on rides, metres per heartbeat on runs
+    const rides = A.filter((x) => x.sport === 'bike' && x.power && (x.np || x.watts) && x.hr && x.minutes >= 30).map((x) => ({ t: parseD(x.date).getTime(), v: (x.np || x.watts) / x.hr })).reverse();
+    const runs = A.filter((x) => x.sport === 'run' && x.speed && x.hr && x.minutes >= 20).map((x) => ({ t: parseD(x.date).getTime(), v: (x.speed * 60) / x.hr, pace: 1000 / x.speed / 60 })).reverse();
+    const pace = (p) => `${Math.floor(p)}:${pad(Math.round((p % 1) * 60))}/km`;
+    h += `<div class="fitrow"><div class="grow"><b>Bike</b><span>Watts per heartbeat, rides 30 min+</span></div>${rides.length ? `<div class="fitv">${trendText(rides, (v) => v.toFixed(2) + ' W')}</div>${spark(rides.slice(-16).map((p) => p.v), 64, 28)}` : '<span class="small mute">No power rides yet</span>'}</div>
+      <div class="fitrow"><div class="grow"><b>Run</b><span>${runs.length ? 'Metres per heartbeat · last pace ' + pace(runs[runs.length - 1].pace) : 'Shows once you’re running again'}</span></div>${runs.length ? `<div class="fitv">${trendText(runs, (v) => v.toFixed(2) + ' m')}</div>${spark(runs.slice(-16).map((p) => p.v), 64, 28, 'var(--amber)')}` : ''}</div>`;
+  }
+  // fitness (CTL), fatigue (ATL) and form (CTL − ATL) from intervals.icu, last 90 days
+  const L = ((S.data.cardio && S.data.cardio.load) || []).slice(-90);
+  if (L.length > 7) {
+    const lo = Math.min(...L.map((x) => Math.min(x.ctl, x.atl))), hi = Math.max(...L.map((x) => Math.max(x.ctl, x.atl))), rg = Math.max(1, hi - lo);
+    const line = (k) => L.map((x, i) => `${(2 + (i * 296) / (L.length - 1)).toFixed(1)},${(66 - ((x[k] - lo) / rg) * 60).toFixed(1)}`).join(' ');
+    const z = L[L.length - 1], form = Math.round(z.ctl - z.atl), wk = L[Math.max(0, L.length - 8)];
+    const fcol = form > 5 ? 'var(--accent)' : form < -20 ? 'var(--red)' : form < -10 ? 'var(--amber)' : 'var(--soft)';
+    h += `<div class="fitrow" style="flex-direction:column;align-items:stretch;gap:6px"><div class="row" style="justify-content:space-between"><div><b>Fitness &amp; fatigue</b><span>90 days · intervals.icu</span></div>
+      <div class="coros" style="grid-template-columns:repeat(3,auto);gap:4px 14px;text-align:right"><div><b>${Math.round(z.ctl)}</b><span>fitness ${z.ctl - wk.ctl >= 0 ? '+' : ''}${Math.round(z.ctl - wk.ctl)}/wk</span></div><div><b>${Math.round(z.atl)}</b><span>fatigue</span></div><div><b style="color:${fcol}">${form > 0 ? '+' : ''}${form}</b><span>form</span></div></div></div>
+      <svg class="chart" viewBox="0 0 300 70" role="img" aria-label="Fitness and fatigue over 90 days"><polyline points="${line('atl')}" fill="none" stroke="#FF8FA3" stroke-width="1.5" stroke-opacity=".7"/><polyline points="${line('ctl')}" fill="none" stroke="#5AB0FF" stroke-width="2.5" stroke-linecap="round"/></svg>
+      <div class="legend"><span><i style="background:#5AB0FF"></i>Fitness</span><span><i style="background:#FF8FA3"></i>Fatigue</span><span>Form = fitness − fatigue</span></div></div>`;
+  }
+  // recovery trends, last 30 days
+  const HH = healthDays().slice(-30);
+  if (HH.length > 7) {
+    const row = (f, label, fmt, col, better) => { const v = HH.filter((x) => x[f] != null); if (v.length < 4) return ''; const a7 = avg(v.slice(-7).map((x) => x[f])), aPrev = avg(v.slice(0, -7).map((x) => x[f]));
+      const dlt = aPrev != null ? a7 - aPrev : 0, good = better === 'up' ? dlt > 0 : dlt < 0, show = Math.abs(dlt) >= (f === 'sleep' ? 0.2 : 1);
+      return `<div class="fitrow"><div class="grow"><b>${label}</b><span>7-day average${show ? ` · <span style="color:${good ? 'var(--accent)' : 'var(--amber)'}">${dlt > 0 ? '+' : ''}${f === 'sleep' ? Math.round(dlt * 60) + ' min' : Math.round(dlt)} vs before</span>` : ''}</span></div><div class="fitv">${fmt(a7)}</div>${spark(v.map((x) => x[f]), 64, 28, col)}</div>`; };
+    h += row('sleep', 'Sleep', hrs, '#B79CFF', 'up') + row('rhr', 'Resting heart rate', (x) => Math.round(x) + ' bpm', '#FF8FA3', 'down') + row('hrv', 'HRV', (x) => Math.round(x) + ' ms', '#5AB0FF', 'up');
+  }
+  // COROS numbers written by the coaching chat; trends once it keeps a history
+  const hist = Array.isArray(c.history) ? c.history : [];
+  const tile = (v, label, key) => `<div><b>${v ?? '–'}</b><span>${label}</span>${hist.filter((x) => x[key] != null).length > 1 ? spark(hist.filter((x) => x[key] != null).slice(-12).map((x) => key === 'thresholdPace' ? -parseFloat(String(x[key]).replace(':', '.')) : x[key]), 80, 22) : ''}</div>`;
+  if (c.vo2max || c.ftp) h += `<div class="small" style="color:var(--soft);margin:14px 0 8px">From COROS${c.updated ? ' · ' + shortDate(c.updated) : ''}</div><div class="coros">${tile(c.vo2max, 'VO2max', 'vo2max')}${tile(c.ftp ? c.ftp + ' W' : null, 'FTP' + (S.data.cardio && S.data.cardio.ftp ? ` · eFTP ${S.data.cardio.ftp}` : ''), 'ftp')}${tile(c.thresholdPace ? String(c.thresholdPace).replace(' /km', '') : null, 'Threshold pace', 'thresholdPace')}</div>`;
+  return h + '</div>';
 }
 function vLiftSheet(id) {
   const arr = stats().byEx[id] || [], ex = EX(id);

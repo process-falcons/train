@@ -13,5 +13,22 @@
   "bikeHours": 4.5,
   "strengthHours": 1.5,
   "other": ""
- }
+ },
+ "history": [
+  {
+   "date": "2029-11-20",
+   "vo2max": 48,
+   "ftp": 240
+  },
+  {
+   "date": "2029-12-10",
+   "vo2max": 49,
+   "ftp": 245
+  },
+  {
+   "date": "2030-01-07",
+   "vo2max": 50,
+   "ftp": 250
+  }
+ ]
 }
