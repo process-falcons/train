@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.9.3';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster'];
@@ -43,6 +43,8 @@ const I = {
   today: '<path d="M6.5 6.5h11M6.5 17.5h11M3 9v6M21 9v6M6.5 6.5v11M17.5 6.5v11"/>', progress: '<path d="M4 19l5-6 4 3 7-9"/>',
   plan: '<path d="M8 3v18M4 7h8M16 3v18M12 15h8"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  bike: '<circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M5.5 17l3.5-7h6.5l3 7M9 10l3 7M12 17h-6.5M14 5.5h2.5l2 4.5"/>',
+  pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   plane: '<path d="M10.5 4.5a1.5 1.5 0 0 1 3 0V10l7 4.5v2l-7-2.5v4.5l2 1.5v1.5L12 20.5 8.5 21.5V20l2-1.5V14l-7 2.5v-2l7-4.5z"/>',
   cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
@@ -466,7 +468,35 @@ function dutyRow(d) {
   return `<div class="loc duty" role="note" aria-label="Duty: ${esc(main)}">${ic('plane', 18, 2, `style="color:var(--${r.duty === 'OFF' ? 'mute' : 'amber'})"`)}<span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(main)}</span>${sub.length ? `<span class="small mute" style="display:block;margin-top:2px">${sub.join(' · ')}</span>` : ''}</span></div>`;
 }
 function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
-const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? (/bike|ride|spin/i.test(sd.other || '') ? 'Ride' : 'Rest') : '';
+/* cardio for a day: schedule "cardio" items if the coach wrote them, else the cardio part of the free-text "other" line */
+const SPORTS = [['bike', /bike|ride|spin|cycl|whoosh|turbo/i, 'Ride'], ['run', /\brun|jog/i, 'Run'], ['swim', /swim/i, 'Swim'], ['walk', /walk|hike/i, 'Walk'], ['row', /\brow(ing|er)?\b/i, 'Row']];
+const sportOf = (txt) => (SPORTS.find(([, re]) => re.test(txt || '')) || ['cardio'])[0];
+const SPORT_LABEL = Object.fromEntries(SPORTS.map(([k, , l]) => [k, l]));
+const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+function cardioFor(sd) {
+  if (!sd) return { items: [], rest: '' };
+  if (Array.isArray(sd.cardio)) return { items: sd.cardio.map((c) => ({ sport: c.sport || sportOf(c.title), ...c })), rest: sd.other || '' };
+  const items = [], rest = [];
+  const parts = String(sd.other || '').split(/\s+·\s+/).filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    let p = parts[i];
+    const bare = SPORTS.find(([, re]) => re.test(p)) && p.trim().split(/\s+/).length === 1; // "Bike · 90 min endurance" – the sport on its own
+    if (bare && parts[i + 1]) { p = p + ' ' + parts[++i]; }
+    if (!SPORTS.some(([, re]) => re.test(p))) { rest.push(p); continue; }
+    const sport = sportOf(p);
+    let title = bare ? p.replace(/^\S+\s+/, '') : p, time = null, optional = false;
+    const tm = /,\s*(\d{1,2}:\d{2})\s*$/.exec(title); if (tm) { time = tm[1]; title = title.slice(0, tm.index); }
+    if (/^optional\s+/i.test(title)) { optional = true; title = title.replace(/^optional\s+/i, ''); }
+    items.push({ sport, title: cap(title.trim()), time, optional });
+  }
+  return { items, rest: rest.join(' · ') };
+}
+const dayLabel = (sd) => sd && sd.sid ? SHORT[sd.sid] || sd.sid : sd ? ((cardioFor(sd).items[0] && SPORT_LABEL[cardioFor(sd).items[0].sport]) || 'Rest') : '';
+function cardioCards(items) {
+  return items.map((c) => `<div class="card cardio"><div class="row" style="gap:12px;align-items:flex-start"><span class="cardio-ic">${ic(c.sport === 'bike' ? 'bike' : 'pulse', 20, 2)}</span><div class="grow">
+    <div class="row" style="gap:6px;flex-wrap:wrap"><span class="tag acc">${esc((c.sport || 'cardio').toUpperCase())}</span>${c.time ? `<span class="tag">${esc(c.time)}</span>` : ''}${c.minutes ? `<span class="tag">${+c.minutes} MIN</span>` : ''}${c.optional ? '<span class="tag auto">OPTIONAL</span>' : ''}</div>
+    <h3>${esc(c.title || 'Cardio')}</h3>${c.detail ? `<div class="small mute" style="font-size:13px;line-height:1.4">${esc(c.detail)}</div>` : ''}</div></div></div>`).join('');
+}
 const calBtn = () => `<button class="iconbtn sm calbtn ${S.cal === 'month' ? 'on' : ''}" data-a="calMode" aria-label="${S.cal === 'month' ? 'Show one week' : 'Show the whole month'}" aria-pressed="${S.cal === 'month'}">${ic('cal', 16)}</button>`;
 function weekStrip(t0, sel) {
   if (S.cal === 'month') return monthGrid(t0, sel);
@@ -515,7 +545,8 @@ function vToday() {
   const sid = S.pick || planned;
   const doneLogs = loggedOn(sel);
   const g = dayGym(sel);
-  const extra = sd && (sd.note || sd.other) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${sd.other ? `<span class="mute">Also: ${esc(sd.other)}</span>` : ''}</div>` : '';
+  const cx = cardioFor(sd0);
+  const extra = sd && (sd.note || cx.rest) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${cx.rest ? `<span class="mute">Also: ${esc(cx.rest)}</span>` : ''}</div>` : '';
 
   if (!sid) {
     h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ap ? '<span class="tag auto">AUTO</span>' : ''}${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>${ap && ap.rest ? 'Rest day' : 'No lifting planned'}</h2>${extra}</div>
@@ -544,6 +575,8 @@ function vToday() {
       ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
       <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
   }
+
+  h += cardioCards(cx.items);
 
   h += `<div class="row" style="gap:8px">${S.pick && S.pick !== planned && planned ? `<button class="btn ghost sm" data-a="pick" data-s="" style="flex:1">Back to plan</button>` : ''}<button class="btn ghost" data-a="go" data-v="choose" style="flex:2;height:56px">${ic('list', 20)}${sid ? 'Choose a different workout' : 'Choose a workout'}</button></div>`;
 

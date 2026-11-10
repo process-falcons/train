@@ -1,6 +1,6 @@
 /* Offline support. App files come from the network when there is signal (so updates show straight away)
    and from the cache when there isn't. */
-const VERSION = 'train-1.9.2';
+const VERSION = 'train-1.9.3';
 const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 

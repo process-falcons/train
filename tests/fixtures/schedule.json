@@ -9,12 +9,22 @@
   "2030-01-08": {
    "sid": "s1",
    "note": "Gym day",
-   "other": null
+   "other": "Bike · 90 min endurance, 10:30"
   },
   "2030-01-10": {
    "sid": "s2",
    "note": null,
-   "other": null
+   "other": "Physio 12:00",
+   "cardio": [
+    {
+     "sport": "run",
+     "title": "Easy run",
+     "time": "07:00",
+     "minutes": 30,
+     "detail": "Zone 2, HR under 140",
+     "optional": true
+    }
+   ]
   }
  }
 }

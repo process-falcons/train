@@ -42,7 +42,7 @@ Several Claude chats touch these repos: the coaching chat edits `train-data`, an
 
 ## Data repository (private): `process-falcons/train-data`
 `programme.json` (exercises with `type`, `equip` alternatives, `pattern`, `inc`; sessions with blocks/slots), `gyms.json`,
-`schedule.json` (date → planned session + notes), `plan.json` (phases, races, optional `rosterRules`), `roster.json` (date → duty FLY/LAYOVER/OFF/STBH/STBA, report, off, sectors, nightstop, overnight; generated – never hand-edit), `coros.json` (snapshot written by the coaching chat),
+`schedule.json` (date → planned session `sid`, `note`, optional `cardio` items, free-text `other`; `cardioFor()` reads `cardio` or pulls the cardio out of `other` for the Today cardio cards), `plan.json` (phases, races, optional `rosterRules`), `roster.json` (date → duty FLY/LAYOVER/OFF/STBH/STBA, report, off, sectors, nightstop, overnight; generated – never hand-edit), `coros.json` (snapshot written by the coaching chat),
 `body.json`, `logs/*.json` (one file per workout, written by the app). See that repo's README for formats.
 The coaching side (training plans, COROS, calendar) is handled in a separate Claude chat that also edits the data repo – always pull before editing it.
 
