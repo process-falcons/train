@@ -72,8 +72,8 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .dot{width:36px;height:36px;border-radius:18px;background:var(--card);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 
 /* nav */
-.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(3,1fr);padding:8px 12px calc(var(--safe-b) + 10px);background:rgba(11,13,16,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line);max-width:520px;margin:0 auto}
-.nav button{height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--mute);font-size:11px;font-weight:500;transition:color .2s}
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(3,1fr);padding:4px 12px max(calc(var(--safe-b) - 6px), 8px);background:rgba(11,13,16,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line);max-width:520px;margin:0 auto}
+.nav button{height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--mute);font-size:11px;font-weight:500;transition:color .2s}
 .nav button.on{color:var(--accent);font-weight:600}
 
 /* session */

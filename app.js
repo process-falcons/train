@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -170,14 +170,23 @@ function resolve(sid, item, g) {
   const lastEx = item.ex[item.ex.length - 1];
   return { ex: lastEx, swapped: item.ex.length > 1, why: 'needs ' + missingFor(EX(lastEx), g).join(', ').toLowerCase() };
 }
-const session = (sid) => (S.gen && S.gen.id === sid ? S.gen : P().sessions.find((s) => s.id === sid));
+const session = (sid) => (sid === 'snack' ? (S.snackShuffle && S.snackShuffle.key === 'snack-' + ymd(today0()) + '-' + gym().id ? S.snackShuffle : dailySnack()) : S.gen && S.gen.id === sid ? S.gen : P().sessions.find((s) => s.id === sid));
 const GEN = {
   full: { name: 'Full body', slots: [['squat', 'glute'], ['hpush'], ['hinge', 'hamstring', 'glute'], ['hpull', 'vpull'], ['core', 'antirot']] },
   upper: { name: 'Upper body', slots: [['hpush'], ['hpull'], ['vpush'], ['vpull', 'reardelt'], ['core', 'antirot']] },
   lower: { name: 'Lower body', slots: [['squat'], ['hinge', 'glute'], ['squat', 'hamstring'], ['calf'], ['core', 'antirot']] },
+  snack: { name: 'Strength snack', slots: [['hpush', 'vpush'], ['hpull', 'vpull'], ['core', 'antirot', 'carry']], sets: 3, minutes: 10 },
   core: { name: 'Core & carry', slots: [['antirot'], ['core'], ['carry'], ['core'], ['reardelt', 'glute']] },
 };
-function generate(focus) {
+function seeded(str) { let h = 2166136261; for (const ch of str) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; }; }
+function dailySnack() {
+  const key = 'snack-' + ymd(today0()) + '-' + gym().id;
+  if (S.snack && S.snack.key === key) return S.snack;
+  const keep = S.gen; generate('snack', seeded(key)); S.snack = { ...S.gen, key, id: 'snack' }; S.gen = keep; LS.set('gen', keep);
+  return S.snack;
+}
+function generate(focus, rnd) {
+  rnd = rnd || Math.random;
   const g = gym(), all = P().exercises, def = GEN[focus] || GEN.full;
   const recent = new Set(stats().logs.filter((l) => Date.now() - new Date(l.start).getTime() < 2 * DAY).flatMap((l) => l.sets.map((s) => s.ex)));
   const used = new Set(), usedPat = new Set(); const items = [];
@@ -188,12 +197,12 @@ function generate(focus) {
     if (!pool.length) pool = Object.keys(all).filter((id) => pats.some((pt) => ok(id, pt)));
     const fresh = pool.filter((id) => !recent.has(id)); if (fresh.length) pool = fresh;
     if (!pool.length) return;
-    const id = pool[Math.floor(Math.random() * pool.length)]; used.add(id);
+    const id = pool[Math.floor(rnd() * pool.length)]; used.add(id);
     const ex = all[id];
     const t = ex.type === 'time' ? { target: '30 s', lo: 30, hi: 40 } : ex.type === 'carry' ? { target: '30 m', lo: 30, hi: 40 } : { target: '8–12', lo: 8, hi: 12 };
-    items.push({ slot: String.fromCharCode(65 + i), ex: [id], sets: 2, ...t });
+    items.push({ slot: String.fromCharCode(65 + i), ex: [id], sets: def.sets || 2, ...t });
   });
-  S.gen = { id: 'gen-' + focus, name: '10-min ' + def.name.toLowerCase(), label: 'Quick workout', minutes: 10, quick: true, focus, blocks: [{ key: 'C', circuit: true, items }] };
+  S.lastGen = S.gen = { id: 'gen-' + focus, name: focus === 'snack' ? 'Strength snack' : '10-min ' + def.name.toLowerCase(), label: focus === 'snack' ? 'Snack' : 'Quick workout', minutes: def.minutes || 10, quick: true, focus, blocks: [{ key: 'C', circuit: true, items }] };
   LS.set('gen', S.gen);
   return S.gen.id;
 }
@@ -399,7 +408,7 @@ function vToday() {
     const swaps = items.filter((x) => x.r.swapped).length;
     const isDone = doneLogs.some((l) => l.sid === sid);
     const tag = S.pick && S.pick !== planned ? '<span class="tag amb">YOUR PICK</span>' : sd && sd.sid ? `<span class="tag acc">PLANNED ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : '<span class="tag">UP NEXT</span>';
-    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${s.quick ? ` · ${s.blocks[0].items.length} exercises × 2 rounds · 10 s between, 45 s after each round` : (P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
+    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${s.quick ? ` · ${s.blocks[0].items.length} exercises × ${s.blocks[0].items[0] ? s.blocks[0].items[0].sets : 2} rounds · ${s.focus === 'snack' ? 'changes daily' : '10 s between, 45 s after each round'}` : (P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
       <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
       <ol class="exlist">${blocks.join('')}</ol>
       ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
@@ -683,10 +692,10 @@ function vChoose() {
     const names = s.blocks.flatMap((b) => b.items.map((it) => EX(resolve(s.id, it, g).ex).name));
     return `<button class="pickcard" data-a="choose" data-s="${s.id}"><span class="row" style="justify-content:space-between;width:100%"><span class="label acc">${esc(s.label)}</span><span class="small mute">${s.minutes} min</span></span><span class="pc-t">${esc(s.name)}</span><span class="small mute" style="line-height:1.4">${esc(names.slice(0, 5).join(' · '))}${names.length > 5 ? ` +${names.length - 5}` : ''}</span></button>`;
   };
-  const quick = Object.entries(GEN).map(([k, v]) => `<button class="quickbtn" data-a="genQuick" data-f="${k}"><b>${esc(v.name)}</b><span>10 min</span></button>`).join('');
+  const quick = Object.entries(GEN).filter(([k]) => k !== 'snack').map(([k, v]) => `<button class="quickbtn" data-a="genQuick" data-f="${k}"><b>${esc(v.name)}</b><span>10 min</span></button>`).join('');
   return `<div class="view"><div class="shead" style="margin-bottom:12px"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Choose a workout</b><span class="small mute">${ic('pin', 12, 2.4)} ${esc(g.name)}</span></div></div>
     <div class="label" style="margin:4px 4px 10px">Your programme</div>
-    <div class="stack" style="gap:10px">${P().sessions.map(card).join('')}</div>
+    <div class="stack" style="gap:10px">${P().sessions.map((s) => card(session(s.id))).join('')}</div>
     <div class="label" style="margin:22px 4px 6px">Quick 10-minute workout</div>
     <div class="small mute" style="margin:0 4px 10px">Built from what ${esc(g.name)} has. Two rounds, short rests.</div>
     <div class="quickgrid">${quick}</div></div>`;
@@ -870,7 +879,7 @@ const A = {
   go(d) { S.view = d.v; S.editing = null; render(); toTop(); },
   pick(d) { S.pick = d.s || null; render(); },
   choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
-  genQuick(d) { S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
+  genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
   selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; render(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
