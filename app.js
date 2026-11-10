@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -730,7 +730,7 @@ function vChoose() {
     return `<button class="pickcard" data-a="choose" data-s="${s.id}"><span class="row" style="justify-content:space-between;width:100%"><span class="label acc">${esc(s.label)}</span><span class="small mute">${s.minutes} min</span></span><span class="pc-t">${esc(s.name)}</span><span class="small mute" style="line-height:1.4">${esc(names.slice(0, 5).join(' · '))}${names.length > 5 ? ` +${names.length - 5}` : ''}</span></button>`;
   };
   const quick = Object.entries(GEN).filter(([k]) => k !== 'snack').map(([k, v]) => `<button class="quickbtn" data-a="genQuick" data-f="${k}"><b>${esc(v.name)}</b><span>10 min</span></button>`).join('');
-  return `<div class="view"><div class="shead" style="margin-bottom:12px"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Choose a workout</b><span class="small mute">${ic('pin', 12, 2.4)} ${esc(g.name)}</span></div></div>
+  return `<div class="view"><div class="shead" style="margin-bottom:12px"><button class="iconbtn" data-a="back" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Choose a workout</b><span class="small mute">${ic('pin', 12, 2.4)} ${esc(g.name)}</span></div></div>
     <div class="label" style="margin:4px 4px 10px">Your programme</div>
     <div class="stack" style="gap:10px">${P().sessions.map((s) => card(session(s.id))).join('')}</div>
     <div class="label" style="margin:22px 4px 6px">Quick 10-minute workout</div>
@@ -858,7 +858,7 @@ function vGyms() {
   const g = S.data.gyms, cur = g.current;
   const card = (x) => `<div class="row" style="gap:8px;margin-bottom:8px"><button class="opt ${x.id === cur ? 'best' : ''}" data-a="setGym" data-g="${esc(x.id)}" style="margin:0;flex:1;${x.unset ? 'border-style:dashed' : ''}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(x.name)}${x.airport ? ` <span class="mute" style="font-weight:500">· ${esc(x.airport)}</span>` : ''}</span><span class="small ${x.unset ? 'amb' : 'mute'}">${x.unset ? 'Not set up yet · tap the pencil to tick its equipment' : esc((x.equip || []).slice(0, 6).map((e) => EQ_NAME[e] || e).join(' · ')) + ((x.equip || []).length > 6 ? ` +${x.equip.length - 6}` : '')}${x.lastUsed ? ' · used ' + shortDate(x.lastUsed) : ''}</span></span>${x.id === cur ? '<span class="small acc" style="font-weight:700">Here</span>' : ''}</button><button class="iconbtn" data-a="editGym" data-g="${esc(x.id)}" aria-label="Edit ${esc(x.name)}">${ic('edit', 18)}</button></div>`;
   const home = g.gyms.filter((x) => x.group === 'home' && !x.archived), hotels = g.gyms.filter((x) => x.group !== 'home' && !x.archived).sort((a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
-  return `<div class="view"><div class="shead" style="margin-bottom:10px"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Where are you training?</b></div></div>
+  return `<div class="view"><div class="shead" style="margin-bottom:10px"><button class="iconbtn" data-a="back" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Where are you training?</b></div></div>
     <div class="label" style="margin:8px 4px">Home base</div>${home.map(card).join('')}
     <div class="label" style="margin:18px 4px 8px">Layover hotels</div>${hotels.map(card).join('') || '<div class="empty">No hotels yet.</div>'}
     <button class="btn ghost sm" data-a="editGym" data-g="" style="margin-top:6px;color:var(--accent)">${ic('plus', 18)} Add a gym or hotel</button></div>`;
@@ -887,7 +887,7 @@ function vGymSheet(id) {
 /* ---------- view: settings ---------- */
 function vSettings() {
   const c = S.cfg;
-  return `<div class="view"><div class="shead" style="margin-bottom:10px">${S.data && S.data.programme ? `<button class="iconbtn" data-a="go" data-v="today" aria-label="Back">${ic('back', 20)}</button>` : ''}<div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Settings</b></div></div>
+  return `<div class="view"><div class="shead" style="margin-bottom:10px">${S.data && S.data.programme ? `<button class="iconbtn" data-a="back" aria-label="Back">${ic('back', 20)}</button>` : ''}<div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Settings</b></div></div>
     <div class="card pad"><div class="label" style="margin-bottom:12px">GitHub connection</div>
       <label class="field">GitHub username<input id="cOwner" value="${esc(c.owner)}" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <label class="field">Data repository<input id="cRepo" value="${esc(c.repo)}" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
@@ -921,7 +921,8 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.ad
 
 /* ---------- actions ---------- */
 const A = {
-  go(d) { S.view = d.v; S.editing = null; render(); toTop(); },
+  back() { S.stack = S.stack || []; let to = S.stack.pop(); while (to === S.view) to = S.stack.pop(); S.view = to || 'today'; S.editing = null; render(); toTop(); },
+  go(d) { S.stack = S.stack || []; if (['today', 'progress', 'plan'].includes(d.v)) S.stack = []; else if (d.v !== S.view) S.stack.push(S.view); S.view = d.v; S.editing = null; render(); toTop(); },
   pick(d) { S.pick = d.s || null; render(); },
   choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
   genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
@@ -962,7 +963,7 @@ const A = {
   logSheet(d) { openSheet('log', d.id); },
   bodySheet() { openSheet('body'); },
   saveBody() { const v = toKg(parseFloat(($('#bodyKg') || {}).value)); if (!(v > 30 && v < 250)) { toast('Enter your weight in ' + U()); return; } const b = S.data.body = S.data.body || { entries: [] }; const t = ymd(new Date()); b.entries = b.entries.filter((e) => e.date !== t); b.entries.push({ date: t, kg: Math.round(v * 10) / 10 }); save('data'); invalidate(); enqueue({ kind: 'file', name: 'body', data: b }); closeSheet(); render(); toast('Weight saved'); },
-  setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.view = 'today'; render(); },
+  setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.stack = []; S.view = 'today'; render(); },
   setGymHere(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
   gymUnit(d) {
@@ -1027,11 +1028,14 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 
 /* screens with a back arrow: swipe right, or pull down from the top, to go back */
 (function backSwipe() {
-  const BACK = { choose: 'today' };
+  const BACKABLE = ['choose', 'gyms', 'settings', 'session'];
+
   let x0 = null, y0 = 0, dx = 0, dy = 0, mode = null, el = null;
   document.addEventListener('touchstart', (e) => {
     x0 = null;
-    if (!BACK[S.view] || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea')) return;
+    if (!BACKABLE.includes(S.view) || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, .week')) return;
+    if (S.view === 'settings' && !(S.data && S.data.programme)) return;
+    if (S.view === 'session' && e.touches[0].clientX > 32) return; // in a workout only an edge swipe goes back
     el = $('#app > .view'); if (!el) return;
     x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; dy = 0; mode = null;
   }, { passive: true });
@@ -1040,7 +1044,7 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
     dx = e.touches[0].clientX - x0; dy = e.touches[0].clientY - y0;
     if (!mode) {
       if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-      mode = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : dy > 0 && dy > Math.abs(dx) && window.scrollY <= 0 ? 'y' : 'none';
+      mode = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : S.view !== 'session' && dy > 0 && dy > Math.abs(dx) && window.scrollY <= 0 ? 'y' : 'none';
       if (mode === 'none') return;
       el.style.animation = 'none'; el.style.transition = 'none';
     }
@@ -1057,9 +1061,9 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
     if (!mode || mode === 'none') return;
     if (e.cancelable) e.preventDefault();
     swallowUntil = Date.now() + 450;
-    const leave = mode === 'x' ? dx > 90 : dy > 140, to = BACK[S.view];
+    const leave = mode === 'x' ? dx > 90 : dy > 140, from = S.view;
     el.style.transition = 'transform .22s var(--ease), opacity .22s';
-    if (leave) { el.style.transform = mode === 'x' ? 'translateX(100%)' : 'translateY(35%)'; el.style.opacity = '0'; setTimeout(() => { if (S.view in BACK) A.go({ v: to }); }, 200); }
+    if (leave) { el.style.transform = mode === 'x' ? 'translateX(100%)' : 'translateY(35%)'; el.style.opacity = '0'; setTimeout(() => { if (S.view === from) { if (from === 'session') A.go({ v: 'today' }); else A.back(); } }, 200); }
     else { el.style.transform = ''; el.style.opacity = ''; }
     mode = null;
   };
