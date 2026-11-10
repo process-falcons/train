@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -170,7 +170,8 @@ function resolve(sid, item, g) {
   const lastEx = item.ex[item.ex.length - 1];
   return { ex: lastEx, swapped: item.ex.length > 1, why: 'needs ' + missingFor(EX(lastEx), g).join(', ').toLowerCase() };
 }
-const session = (sid) => (sid === 'snack' ? (S.snackShuffle && S.snackShuffle.key === 'snack-' + ymd(today0()) + '-' + gym().id ? S.snackShuffle : dailySnack()) : S.gen && S.gen.id === sid ? S.gen : P().sessions.find((s) => s.id === sid));
+const session = (sid) => { if (S.gen && S.gen.id === sid && S.gen.gymId !== gym().id) generate(S.gen.focus); return sessionRaw(sid); };
+const sessionRaw = (sid) => (sid === 'snack' ? (S.snackShuffle && S.snackShuffle.key === 'snack-' + ymd(today0()) + '-' + gym().id ? S.snackShuffle : dailySnack()) : S.gen && S.gen.id === sid ? S.gen : P().sessions.find((s) => s.id === sid));
 const GEN = {
   full: { name: 'Full body', slots: [['squat', 'glute'], ['hpush'], ['hinge', 'hamstring', 'glute'], ['hpull', 'vpull'], ['core', 'antirot']] },
   upper: { name: 'Upper body', slots: [['hpush'], ['hpull'], ['vpush'], ['vpull', 'reardelt'], ['core', 'antirot']] },
@@ -202,7 +203,7 @@ function generate(focus, rnd) {
     const t = ex.type === 'time' ? { target: '30 s', lo: 30, hi: 40 } : ex.type === 'carry' ? { target: '30 m', lo: 30, hi: 40 } : { target: '8–12', lo: 8, hi: 12 };
     items.push({ slot: String.fromCharCode(65 + i), ex: [id], sets: def.sets || 2, ...t });
   });
-  S.lastGen = S.gen = { id: 'gen-' + focus, name: focus === 'snack' ? 'Strength snack' : '10-min ' + def.name.toLowerCase(), label: focus === 'snack' ? 'Snack' : 'Quick workout', minutes: def.minutes || 10, quick: true, focus, blocks: [{ key: 'C', circuit: true, items }] };
+  S.lastGen = S.gen = { gymId: g.id, id: 'gen-' + focus, name: focus === 'snack' ? 'Strength snack' : '10-min ' + def.name.toLowerCase(), label: focus === 'snack' ? 'Snack' : 'Quick workout', minutes: def.minutes || 10, quick: true, focus, blocks: [{ key: 'C', circuit: true, items }] };
   LS.set('gen', S.gen);
   return S.gen.id;
 }
@@ -697,7 +698,8 @@ function vChoose() {
     <div class="label" style="margin:4px 4px 10px">Your programme</div>
     <div class="stack" style="gap:10px">${P().sessions.map((s) => card(session(s.id))).join('')}</div>
     <div class="label" style="margin:22px 4px 6px">Quick 10-minute workout</div>
-    <div class="small mute" style="margin:0 4px 10px">Built from what ${esc(g.name)} has. Two rounds, short rests.</div>
+    <div class="small mute" style="margin:0 4px 10px">Where are you? It's built from what that place has.</div>
+    <div class="chips" style="margin-bottom:12px">${gyms().filter((x) => !x.archived).map((x) => `<button class="pill ${x.id === g.id ? 'on' : ''}" data-a="setGymHere" data-g="${esc(x.id)}">${esc(x.airport ? x.airport : x.name)}</button>`).join('')}</div>
     <div class="quickgrid">${quick}</div></div>`;
 }
 
@@ -912,6 +914,7 @@ const A = {
   bodySheet() { openSheet('body'); },
   saveBody() { const v = toKg(parseFloat(($('#bodyKg') || {}).value)); if (!(v > 30 && v < 250)) { toast('Enter your weight in ' + U()); return; } const b = S.data.body = S.data.body || { entries: [] }; const t = ymd(new Date()); b.entries = b.entries.filter((e) => e.date !== t); b.entries.push({ date: t, kg: Math.round(v * 10) / 10 }); save('data'); invalidate(); enqueue({ kind: 'file', name: 'body', data: b }); closeSheet(); render(); toast('Weight saved'); },
   setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.view = 'today'; render(); },
+  setGymHere(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
   toggleEq(d, el) { const dr = S.gymDraft; const i = dr.equip.indexOf(d.e); if (i >= 0) dr.equip.splice(i, 1); else dr.equip.push(d.e); el.classList.toggle('on', i < 0); },
   saveGym() {
