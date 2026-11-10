@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -21,6 +21,13 @@ const parseD = (s) => { const [y, m, d] = s.split('-').map(Number); return new D
 const today0 = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 const fmtNum = (n) => (n == null || isNaN(n)) ? '–' : (Math.round(n * 10) / 10).toString();
 const fmtTime = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
+const LB = 2.20462;
+const U = () => (S.cfg.unit === 'lb' ? 'lb' : 'kg');
+const W = (kg) => (kg == null || isNaN(kg) ? kg : U() === 'lb' ? Math.round(kg * LB * 2) / 2 : Math.round(kg * 10) / 10);
+const toKg = (v) => (v == null || isNaN(v) ? v : U() === 'lb' ? Math.round((v / LB) * 1000) / 1000 : v);
+const lbStep = (incKg) => { const x = incKg * LB; return x < 4 ? 2.5 : Math.round(x / 5) * 5; };
+const stepU = (incKg) => (U() === 'lb' ? lbStep(incKg) : incKg);
+function fmtVol(v) { if (U() === 'lb') { const w = v * LB; return w >= 10000 ? (w / 1000).toFixed(1) + 'k lb' : Math.round(w) + ' lb'; } return v >= 1000 ? fmtNum(v / 1000) + ' t' : Math.round(v) + ' kg'; }
 const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const shortDate = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MON[d.getMonth()]}`; };
@@ -46,7 +53,7 @@ const EQ_NAME = Object.fromEntries(EQUIP);
 
 /* ---------- state ---------- */
 const S = {
-  cfg: Object.assign({ owner: '', repo: 'train-data', token: '', rest: 90, sound: true }, LS.get('cfg', {})),
+  cfg: Object.assign({ owner: '', repo: 'train-data', token: '', rest: 90, sound: true, unit: 'kg' }, LS.get('cfg', {})),
   data: LS.get('data', null),
   logs: LS.get('logs', {}),
   queue: LS.get('queue', []),
@@ -215,8 +222,7 @@ function prefill(item, exId) {
       else if (ex.type === 'reps') out.push({ reps: lo });
       else out.push({ kg: 0, reps: lo });
     }
-    tip = { kind: 'info', text: ex.cue || (ex.type === 'load' || ex.type === 'carry' ? 'First time logged. Pick a weight that leaves 1–2 reps in reserve.' : 'First time logged.') };
-    if (ex.cue && (ex.type === 'load' || ex.type === 'carry')) tip.text = ex.cue + ' First time logged – start steady.';
+    tip = { kind: 'first', exId };
     return { sets: out, tip };
   }
   const L = last.sets;
@@ -224,27 +230,33 @@ function prefill(item, exId) {
   progress = L.length >= Math.min(n, L.length) && L.every((s) => (metric(s) || 0) >= hi);
   const topKg = Math.max(...L.map((s) => s.kg || 0));
   const inc = ex.inc || 2.5;
+  const nextKg = U() === 'lb' ? toKg(Math.round(topKg * LB / 2.5) * 2.5 + lbStep(inc)) : topKg + inc;
   for (let i = 0; i < n; i++) {
     const p = L[i] || L[L.length - 1];
     if (ex.type === 'time') out.push({ sec: progress ? (p.sec || lo) + 5 : (p.sec || lo) });
     else if (ex.type === 'reps') out.push({ reps: progress ? (p.reps || lo) + 1 : (p.reps || lo) });
-    else if (ex.type === 'carry') out.push({ kg: progress ? topKg + inc : (p.kg ?? topKg), m: p.m || lo });
-    else out.push({ kg: progress ? topKg + inc : (p.kg ?? topKg), reps: progress ? lo : (p.reps || lo) });
+    else if (ex.type === 'carry') out.push({ kg: progress ? nextKg : (p.kg ?? topKg), m: p.m || lo });
+    else out.push({ kg: progress ? nextKg : (p.kg ?? topKg), reps: progress ? lo : (p.reps || lo) });
   }
-  const unit = ex.type === 'bw' ? '+kg' : 'kg';
-  const lastTxt = L.map((s) => setText(exId, s, true)).join(', ');
-  if (progress) {
-    if (ex.type === 'load' || ex.type === 'carry' || ex.type === 'bw') tip = { kind: 'up', text: `Hit ${hi} on every set last time. <b>Go to ${fmtNum(topKg + inc)} ${unit}${ex.perDB ? ' per dumbbell' : ''}.</b>` };
-    else tip = { kind: 'up', text: `Hit the top of the range last time. <b>Add a rep or ${ex.type === 'time' ? '5 s' : 'slow it down'}.</b>` };
-  } else tip = { kind: 'info', text: `Last time (${shortDate(last.log.start)}): ${esc(lastTxt)}. Beat one set today.` };
+  tip = progress ? { kind: 'up', exId, hi, nextKg } : { kind: 'info', exId, date: last.log.start, sets: L };
   return { sets: out, tip, last: L };
+}
+function tipHtml(t) {
+  if (!t) return '';
+  const ex = EX(t.exId);
+  if (t.kind === 'first') return esc(ex.cue ? ex.cue + ' First time logged – start steady.' : (ex.type === 'load' || ex.type === 'carry' ? 'First time logged. Pick a weight that leaves 1–2 reps in reserve.' : 'First time logged.'));
+  if (t.kind === 'up') {
+    if (['load', 'carry', 'bw'].includes(ex.type)) return `Hit ${t.hi} on every set last time. <b>Go to ${ex.type === 'bw' ? '+' : ''}${fmtNum(W(t.nextKg))} ${U()}${ex.perDB ? ' per dumbbell' : ''}.</b>`;
+    return `Hit the top of the range last time. <b>Add a rep or ${ex.type === 'time' ? '5 s' : 'slow it down'}.</b>`;
+  }
+  return `Last time (${shortDate(t.date)}): ${esc(t.sets.map((s) => setText(t.exId, s, true)).join(', '))}. Beat one set today.`;
 }
 function setText(exId, s, short) {
   const ex = EX(exId);
   switch (ex.type) {
-    case 'load': return `${fmtNum(s.kg)}${short ? '' : ' kg'} × ${s.reps ?? '–'}`;
-    case 'bw': return `${s.kg ? '+' + fmtNum(s.kg) : 'BW'} × ${s.reps ?? '–'}`;
-    case 'carry': return `${fmtNum(s.kg)} kg · ${s.m ?? '–'} m`;
+    case 'load': return `${fmtNum(W(s.kg))}${short ? '' : ' ' + U()} × ${s.reps ?? '–'}`;
+    case 'bw': return `${s.kg ? '+' + fmtNum(W(s.kg)) : 'BW'} × ${s.reps ?? '–'}`;
+    case 'carry': return `${fmtNum(W(s.kg))} ${U()} · ${s.m ?? '–'} m`;
     case 'time': return `${s.sec ?? '–'} s`;
     default: return `${s.reps ?? '–'} reps`;
   }
@@ -303,6 +315,7 @@ function statusLine() {
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusLine(); }
 
 /* ---------- view: today ---------- */
+const unitSeg = () => `<div class="seg" role="group" aria-label="Weight unit"><button data-a="unit" data-u="kg" class="${U() === 'kg' ? 'on' : ''}">kg</button><button data-a="unit" data-u="lb" class="${U() === 'lb' ? 'on' : ''}">lb</button></div>`;
 const SHORT = { s1: 'S1', s2: 'S2', s3: 'S3', hotel: 'Hotel', snack: 'Snack' };
 function schedDay(d) { const s = S.data.schedule; return s && s.days ? s.days[ymd(d)] || null : null; }
 function loggedOn(d) { const k = ymd(d); return stats().logs.filter((l) => ymd(new Date(l.start)) === k); }
@@ -397,7 +410,7 @@ function startSession(sid) {
   save('active'); S.view = 'session'; unlockAudio(); wake(); render(); window.scrollTo(0, 0);
 }
 function curStep() { const a = S.active; return a.steps[a.cur] || a.steps[0]; }
-function stepDone([i, r]) { return S.active.items[i].sets[r].done; }
+function stepDone([i, r]) { const s = S.active.items[i].sets[r]; return s.done || s.skipped; }
 function nextOpenAfter(k) { const a = S.active; for (let j = 1; j <= a.steps.length; j++) { const idx = (k + j) % a.steps.length; if (!stepDone(a.steps[idx])) return idx; } return -1; }
 
 function vSession() {
@@ -407,7 +420,7 @@ function vSession() {
   const it = a.items[ii], ex = EX(it.ex);
   const blockItems = a.items.filter((x) => x.bi === it.bi);
   const bkeys = [...new Set(a.items.map((x) => x.bi))];
-  const segs = bkeys.map((bi) => { const xs = a.items.filter((x) => x.bi === bi); const all = xs.every((x) => x.sets.every((s) => s.done)); return `<span class="${all ? 'done' : bi === it.bi ? 'cur' : ''}"></span>`; }).join('');
+  const segs = bkeys.map((bi) => { const xs = a.items.filter((x) => x.bi === bi); const all = xs.every((x) => x.sets.every((s) => s.done || s.skipped)); return `<span class="${all ? 'done' : bi === it.bi ? 'cur' : ''}"></span>`; }).join('');
   const kind = it.power ? 'POWER' : it.block === 'FIN' ? 'FINISHER' : it.block === 'WU' ? 'WARM-UP' : it.optional ? 'OPTIONAL' : blockItems.length > 1 ? `SUPERSET ${it.block} · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : `BLOCK ${it.block}`;
   const unitHint = ex.perDB ? ' · kg per dumbbell' : '';
   const sideHint = ex.perSide ? ' · per side' : '';
@@ -416,7 +429,9 @@ function vSession() {
   it.sets.forEach((s, r) => {
     const editing = r === rr && !(s.done && S.editing !== ii + ':' + r);
     const was = it.lastSets && it.lastSets[r] ? `was ${setText(it.ex, it.lastSets[r], true)}` : '';
-    if (s.done && !(S.editing === ii + ':' + r)) {
+    if (s.skipped) {
+      rows += `<div class="setrow todo"><span class="n">${r + 1}</span><span class="v">Skipped</span></div>`;
+    } else if (s.done && !(S.editing === ii + ':' + r)) {
       rows += `<button class="setrow" data-a="editSet" data-i="${ii}" data-r="${r}"><span class="n">${r + 1}</span><span class="v">${esc(setText(it.ex, s))}</span>${s.pr ? '<span class="pr">PR</span>' : ''}<span class="was">${esc(was)}</span><span class="tick ${s.justDone ? 'pop' : ''}" style="color:var(--accent-ink)">${ic('check', 15, 3)}</span></button>`;
     } else if (r === rr || S.editing === ii + ':' + r) {
       rows += editor(it, ii, r, was);
@@ -432,18 +447,18 @@ function vSession() {
     const [ni, nr] = a.steps[nxt]; const nit = a.items[ni];
     if (ni !== ii) nextCard = `<button class="nextcard" data-a="jumpStep" data-k="${nxt}"><span class="k">${esc(nit.slot)}</span><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(EX(nit.ex).name)}</span><span class="small mute">Next · set ${nr + 1} of ${nit.sets.length} · ${esc(nit.target)}</span></span><span class="mute">${ic('chev', 16)}</span></button>`;
   }
-  const tip = it.tip ? `<div class="tip ${it.tip.kind === 'info' ? '' : ''}">${ic(it.tip.kind === 'up' ? 'up' : 'flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${it.tip.text}</span></div>` : '';
+  const tip = it.tip ? `<div class="tip ${it.tip.kind === 'info' ? '' : ''}">${ic(it.tip && it.tip.kind === 'up' ? 'up' : 'flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${tipHtml(it.tip)}</span></div>` : '';
   const sw = it.swapped && it.why ? `<div class="tip amb">${ic('swap', 18, 2.2, 'style="color:var(--amber)"')}<span>Swapped from ${esc(EX(it.orig).name)} · ${esc(it.why)}.</span></div>` : '';
 
   return `<div class="view session">
     <div class="shead"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back to Today">${ic('back', 20)}</button>
-      <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
+      <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><button class="unitchip" data-a="unit" data-u="${U() === 'kg' ? 'lb' : 'kg'}" aria-label="Switch to ${U() === 'kg' ? 'pounds' : 'kilograms'}">${U()}</button> · <span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
       <button class="textbtn" data-a="finish">Finish</button></div>
     <div class="segs" style="grid-template-columns:repeat(${bkeys.length},minmax(0,1fr))">${segs}</div>
     <div class="stack">
       <div class="card excard">
         <div class="exhead"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><span class="label acc">${kind}</span><h2>${esc(ex.name)}</h2><span class="small mute" style="font-size:13px">${it.sets.length} × ${esc(it.target)}${unitHint}${sideHint}</span></div>
-          <button class="swapbtn" data-a="swapSheet" data-i="${ii}">${ic('swap', 14)}Swap</button></div>
+          <div class="row" style="gap:6px;flex:0 0 auto">${it.sets.some((s) => s.skipped) ? `<button class="swapbtn" data-a="unskipEx" data-i="${ii}">Undo skip</button>` : `<button class="swapbtn" data-a="skipEx" data-i="${ii}">Skip</button>`}<button class="swapbtn" data-a="swapSheet" data-i="${ii}">${ic('swap', 14)}Swap</button></div></div>
         ${sw}${tip}
         <div>${rows}</div>
         <div class="row" style="justify-content:space-between;padding:0 4px"><button class="small mute" data-a="addSet" data-i="${ii}" style="height:36px">+ Add set</button>${it.sets.length > 1 && !it.sets[it.sets.length - 1].done ? `<button class="small mute" data-a="delSet" data-i="${ii}" style="height:36px">Remove last set</button>` : ''}</div>
@@ -457,10 +472,10 @@ function editor(it, ii, r, was) {
   const ex = EX(it.ex), s = it.sets[r];
   const st = (field, label, step, val) => `<div class="stepper"><button data-a="step" data-i="${ii}" data-r="${r}" data-f="${field}" data-d="-${step}" aria-label="Less ${label}">−</button><span class="val"><input inputmode="decimal" data-in="${field}" data-i="${ii}" data-r="${r}" value="${val ?? ''}" aria-label="${label}"><small>${label}</small></span><button data-a="step" data-i="${ii}" data-r="${r}" data-f="${field}" data-d="${step}" aria-label="More ${label}">+</button></div>`;
   let fields = '';
-  const inc = ex.inc || 2.5;
-  if (ex.type === 'load') fields = st('kg', ex.perDB ? 'KG / DB' : 'KG', inc, fmtNum(s.kg)) + st('reps', ex.perSide ? 'REPS / SIDE' : 'REPS', 1, s.reps);
-  else if (ex.type === 'bw') fields = st('kg', 'ADDED KG', inc, fmtNum(s.kg || 0)) + st('reps', 'REPS', 1, s.reps);
-  else if (ex.type === 'carry') fields = st('kg', ex.perDB ? 'KG / HAND' : 'KG', inc, fmtNum(s.kg)) + st('m', ex.perSide ? 'M / SIDE' : 'METRES', 5, s.m);
+  const inc = stepU(ex.inc || 2.5), UL = U().toUpperCase();
+  if (ex.type === 'load') fields = st('kg', ex.perDB ? UL + ' / DB' : UL, inc, fmtNum(W(s.kg))) + st('reps', ex.perSide ? 'REPS / SIDE' : 'REPS', 1, s.reps);
+  else if (ex.type === 'bw') fields = st('kg', 'ADDED ' + UL, inc, fmtNum(W(s.kg || 0))) + st('reps', 'REPS', 1, s.reps);
+  else if (ex.type === 'carry') fields = st('kg', ex.perDB ? UL + ' / HAND' : UL, inc, fmtNum(W(s.kg))) + st('m', ex.perSide ? 'M / SIDE' : 'METRES', 5, s.m);
   else if (ex.type === 'time') fields = st('sec', ex.perSide ? 'SEC / SIDE' : 'SECONDS', 5, s.sec);
   else fields = st('reps', ex.perSide ? 'REPS / SIDE' : 'REPS', 1, s.reps);
   const one = (ex.type === 'time' || ex.type === 'reps') ? ' one' : '';
@@ -475,6 +490,7 @@ function logSet(ii, r) {
   const prev = (stats().prs[it.ex] || 0);
   const bestThis = Math.max(0, ...it.sets.filter((x, k) => x.done && k !== r).map((x) => score(it.ex, x)));
   s.done = true; s.at = Date.now();
+  it.sets.forEach((x, k) => { if (k > r && !x.done && !x.skipped && !x.kg && s.kg) x.kg = s.kg; });
   s.pr = prev > 0 && score(it.ex, s) > prev && score(it.ex, s) > bestThis;
   if (s.pr) it.sets.forEach((x, k) => { if (k !== r && x.pr && score(it.ex, x) <= score(it.ex, s)) x.pr = false; });
   s.justDone = true; setTimeout(() => { s.justDone = false; }, 600);
@@ -501,9 +517,9 @@ function vOverviewSheet() {
   const rows = a.items.map((it, i) => {
     const d = it.sets.filter((s) => s.done).length;
     const k = a.steps.findIndex(([x, r]) => x === i && !it.sets[r].done);
-    return `<button class="opt ${d === it.sets.length ? '' : ''}" data-a="jumpStep" data-k="${k >= 0 ? k : a.steps.findIndex(([x]) => x === i)}"><span style="width:36px;font-size:12px;font-weight:700;color:${it.power ? 'var(--amber)' : 'var(--accent)'}">${esc(it.slot)}</span><span class="grow"><span style="display:block;font-weight:600">${esc(EX(it.ex).name)}</span><span class="small mute">${esc(it.target)}${it.optional ? ' · optional' : ''}</span></span><span class="small ${d === it.sets.length ? 'acc' : 'mute'}" style="font-weight:700">${d}/${it.sets.length}</span></button>`;
+    return `<button class="opt ${d === it.sets.length ? '' : ''}" data-a="jumpStep" data-k="${k >= 0 ? k : a.steps.findIndex(([x]) => x === i)}"><span style="width:36px;font-size:12px;font-weight:700;color:${it.power ? 'var(--amber)' : 'var(--accent)'}">${esc(it.slot)}</span><span class="grow"><span style="display:block;font-weight:600">${esc(EX(it.ex).name)}</span><span class="small mute">${esc(it.target)}${it.optional ? ' · optional' : ''}</span></span><span class="small ${d === it.sets.length ? 'acc' : 'mute'}" style="font-weight:700">${it.sets.every((s) => s.done || s.skipped) && it.sets.some((s) => s.skipped) ? 'Skipped' : d + '/' + it.sets.length}</span></button>`;
   }).join('');
-  return `<div class="grab"></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>All exercises</h3><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>${rows}`;
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>All exercises</h3><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>${rows}`;
 }
 
 function swapOpt(ii, id, it, g, note) {
@@ -518,7 +534,7 @@ function vSwapSheet(ii) {
   const plan = it.opts.map((id, n) => swapOpt(ii, id, it, g, n === 0 ? 'Planned' : '')).join('');
   const same = sortAvail(Object.keys(all).filter((id) => all[id].pattern === pat && !it.opts.includes(id))).map((id) => swapOpt(ii, id, it, g)).join('');
   const patName = (P().patterns || {})[pat] || 'similar';
-  return `<div class="grab"></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">Swap ${esc(it.slot)} · ${esc(g.name)}</div><h3>Choose an exercise</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">Swap ${esc(it.slot)} · ${esc(g.name)}</div><h3>Choose an exercise</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
     <div class="label" style="margin:6px 0 8px">From your programme</div>${plan}
     ${same ? `<div class="label" style="margin:16px 0 8px">Other ${esc(patName.toLowerCase())} options</div>${same}` : ''}
     <button class="toggle" data-a="toggleRemember" style="margin-top:6px"><span>Remember this swap for ${esc(g.name)}</span><span class="sw ${S.remember !== false ? 'on' : ''}" id="remSw"></span></button>
@@ -558,11 +574,12 @@ function vFinishSheet() {
   const mins = Math.max(1, Math.round((Date.now() - a.start) / 60000));
   const vol = volume({ sets });
   const prs = a.items.flatMap((it) => it.sets.filter((s) => s.done && s.pr).map((s) => `${EX(it.ex).name} · ${setText(it.ex, s)}`));
-  const left = a.steps.length - sets.length;
-  return `<div class="grab"></div><h3>Finish session</h3><div class="small mute" style="margin:4px 0 16px">${esc(a.name)} · ${esc(a.gymName)}</div>
-    <div class="tiles" style="margin-bottom:14px"><div class="tile" style="background:var(--raise)"><b>${mins}</b><span>Minutes</span></div><div class="tile" style="background:var(--raise)"><b>${sets.length}</b><span>Sets</span></div><div class="tile" style="background:var(--raise)"><b>${vol >= 1000 ? fmtNum(vol / 1000) + 't' : Math.round(vol)}</b><span>Volume${vol >= 1000 ? '' : ' kg'}</span></div></div>
+  const left = a.steps.filter((st) => !stepDone(st)).length;
+  const skipped = a.items.filter((it) => it.sets.some((s) => s.skipped)).map((it) => EX(it.ex).name);
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><h3>Finish session</h3><div class="small mute" style="margin:4px 0 16px">${esc(a.name)} · ${esc(a.gymName)}</div>
+    <div class="tiles" style="margin-bottom:14px"><div class="tile" style="background:var(--raise)"><b>${mins}</b><span>Minutes</span></div><div class="tile" style="background:var(--raise)"><b>${sets.length}</b><span>Sets</span></div><div class="tile" style="background:var(--raise)"><b style="font-size:20px">${fmtVol(vol)}</b><span>Volume</span></div></div>
     ${prs.length ? `<div class="tip" style="margin-bottom:14px">${ic('up', 18, 2.2, 'style="color:var(--accent)"')}<span><b>${prs.length} PR${prs.length > 1 ? 's' : ''}</b><br>${prs.map(esc).join('<br>')}</span></div>` : ''}
-    ${left > 0 ? `<div class="small mute" style="margin-bottom:12px">${left} planned set${left > 1 ? 's' : ''} not logged – that's fine.</div>` : ''}
+    ${skipped.length ? `<div class="small mute" style="margin-bottom:6px">Skipped: ${skipped.map(esc).join(', ')}</div>` : ''}${left > 0 ? `<div class="small mute" style="margin-bottom:12px">${left} planned set${left > 1 ? 's' : ''} not logged – that's fine.</div>` : ''}
     <div class="field">How hard was it overall? (1–10)<div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button data-a="rpe" data-n="${n}" class="${a.rpe === n ? 'on' : ''}">${n}</button>`).join('')}</div></div>
     <label class="field">Notes (ankle, sleep, anything for Claude)<textarea id="notes">${esc(a.notes || '')}</textarea></label>
     <button class="btn" data-a="saveSession">Save workout</button>
@@ -575,7 +592,7 @@ function saveSession() {
   }));
   if (!sets.length) { toast('No sets logged yet'); return; }
   const start = new Date(a.start), end = new Date();
-  const log = { id: a.id, v: 1, start: start.toISOString(), end: end.toISOString(), minutes: Math.max(1, Math.round((end - start) / 60000)), sid: a.sid, name: a.name, gymId: a.gymId, gymName: a.gymName, rpe: a.rpe || null, notes: a.notes || '', sets, swaps: a.items.filter((it) => it.swapped).map((it) => ({ slot: it.slot, from: it.orig, to: it.ex })), volume: Math.round(volume({ sets })), app: APP_VERSION };
+  const log = { id: a.id, v: 1, start: start.toISOString(), end: end.toISOString(), minutes: Math.max(1, Math.round((end - start) / 60000)), sid: a.sid, name: a.name, gymId: a.gymId, gymName: a.gymName, rpe: a.rpe || null, notes: a.notes || '', sets, swaps: a.items.filter((it) => it.swapped).map((it) => ({ slot: it.slot, from: it.orig, to: it.ex })), skipped: a.items.filter((it) => it.sets.some((s) => s.skipped)).map((it) => it.slot), volume: Math.round(volume({ sets })), app: APP_VERSION };
   const name = `${ymd(start)}-${pad(start.getHours())}${pad(start.getMinutes())}-${a.sid}-${a.id.slice(0, 4)}.json`;
   S.logs[name] = log; save('logs');
   const g = gym(a.gymId); g.lastUsed = ymd(start); save('data');
@@ -638,7 +655,7 @@ function vProgress() {
   const ph = phaseNow();
   const phStart = ph ? parseD(ph.start).getTime() : 0;
   const prCount = logs.filter((l) => new Date(l.start).getTime() >= phStart).reduce((n, l) => n + l.sets.filter((s) => s.pr).length, 0);
-  let h = `<div class="view"><div class="head"><div><div class="sub">${ph ? esc(ph.name) + ' · since ' + shortDate(ph.start) : 'All time'}</div><h1>Progress</h1></div></div><div class="stack">
+  let h = `<div class="view"><div class="head"><div><div class="sub">${ph ? esc(ph.name) + ' · since ' + shortDate(ph.start) : 'All time'}</div><h1>Progress</h1></div>${unitSeg()}</div><div class="stack">
     <div class="tiles"><div class="tile"><b>${logs.length}</b><span>Sessions</span></div><div class="tile"><b>${doneThisBlock()}<span class="mute" style="font-size:16px"> / 3</span></b><span>This roster block</span></div><div class="tile"><b class="acc">${prCount}</b><span>PRs this phase</span></div></div>`;
 
   // weekly volume + sessions
@@ -657,8 +674,8 @@ function vProgress() {
   relFor('leg_press', 'Leg press e1RM'); relFor('weighted_pullup', 'Pull-up e1RM*'); relFor('rdl', 'RDL e1RM');
   const carry = st.byEx.farmers_carry ? st.byEx.farmers_carry.reduce((m, x) => (x.best && x.score > (m ? m.score : 0) ? x : m), null) : null;
   h += `<div class="card pad"><div class="row" style="justify-content:space-between"><span class="label">Body &amp; relative strength</span><button class="small acc" data-a="bodySheet" style="font-weight:700;height:32px">${bk ? 'Update' : '+ Add weight'}</button></div>
-    <div class="coros" style="margin-top:12px"><div><b>${bk ? fmtNum(bk) + ' kg' : '–'}</b><span>Body weight${be.length ? ' · ' + shortDate(be[be.length - 1].date) : ''}</span></div>${rel.join('') || '<div><b>–</b><span>Strength ÷ body weight</span></div>'}${carry ? `<div><b>${fmtNum(carry.best.kg)} kg</b><span>Farmer's carry / hand</span></div>` : ''}</div>
-    ${be.length > 1 ? `<div style="margin-top:10px">${spark(be.slice(-12).map((x) => x.kg), 300, 36, '#5AB0FF')}</div>` : ''}
+    <div class="coros" style="margin-top:12px"><div><b>${bk ? fmtNum(W(bk)) + ' ' + U() : '–'}</b><span>Body weight${be.length ? ' · ' + shortDate(be[be.length - 1].date) : ''}</span></div>${rel.join('') || '<div><b>–</b><span>Strength ÷ body weight</span></div>'}${carry ? `<div><b>${fmtNum(W(carry.best.kg))} ${U()}</b><span>Farmer's carry / hand</span></div>` : ''}</div>
+    ${be.length > 1 ? `<div style="margin-top:10px">${spark(be.slice(-12).map((x) => W(x.kg)), 300, 36, '#5AB0FF')}</div>` : ''}
     ${rel.length ? '<div class="tiny mute" style="margin-top:8px">*includes body weight</div>' : ''}</div>`;
 
   // lifts
@@ -673,11 +690,11 @@ function vProgress() {
       const vals = arr.slice(-8).map((x) => x.e1 || x.score);
       const first = arr.find((x) => new Date(x.date).getTime() >= phStart) || arr[0], lastH = arr[arr.length - 1];
       const bestH = arr.reduce((m, x) => (x.score > m.score ? x : m), arr[0]);
-      const unit = ex.type === 'time' ? ' s' : ex.type === 'reps' ? ' reps' : ' kg';
+      const unit = ex.type === 'time' ? ' s' : ex.type === 'reps' ? ' reps' : ' ' + U();
       const dv = (lastH.e1 && first.e1) ? lastH.e1 - first.e1 : lastH.score - first.score;
-      const dTxt = arr.length < 2 ? 'New' : Math.abs(dv) < 0.5 ? 'Steady' : (dv > 0 ? '+' : '') + fmtNum(ex.type === 'carry' ? dv / Math.max(1, lastH.best.m || 1) : dv) + (ex.type === 'carry' ? ' kg' : unit);
+      const dTxt = arr.length < 2 ? 'New' : Math.abs(dv) < 0.5 ? 'Steady' : (dv > 0 ? '+' : '') + fmtNum(ex.type === 'carry' ? W(dv / Math.max(1, lastH.best.m || 1)) : (ex.type === 'time' || ex.type === 'reps') ? dv : W(dv)) + (ex.type === 'carry' ? ' ' + U() : unit);
       const col = arr.length < 2 || Math.abs(dv) < 0.5 ? 'var(--mute)' : dv > 0 ? 'var(--accent)' : 'var(--amber)';
-      h += `<button class="lift" data-a="liftSheet" data-x="${esc(id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(ex.name)}</span><span class="small mute">Best ${esc(setText(id, bestH.best))}${bestH.e1 ? ' · e1RM ' + Math.round(bestH.e1) : ''}</span></span>${spark(vals, 64, 28, arr.length < 2 || Math.abs(dv) < 0.5 ? '#8B919C' : 'var(--accent)')}<span class="d" style="color:${col}">${dTxt}</span></button>`;
+      h += `<button class="lift" data-a="liftSheet" data-x="${esc(id)}"><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(ex.name)}</span><span class="small mute">Best ${esc(setText(id, bestH.best))}${bestH.e1 ? ' · e1RM ' + Math.round(W(bestH.e1)) : ''}</span></span>${spark(vals, 64, 28, arr.length < 2 || Math.abs(dv) < 0.5 ? '#8B919C' : 'var(--accent)')}<span class="d" style="color:${col}">${dTxt}</span></button>`;
     }
   }
   h += `</div></div>`;
@@ -685,28 +702,28 @@ function vProgress() {
 }
 function vLiftSheet(id) {
   const arr = stats().byEx[id] || [], ex = EX(id);
-  const vals = arr.map((x) => x.e1 || x.score);
-  const W = 320, H = 150;
+  const vals = arr.map((x) => (x.e1 ? W(x.e1) : x.score));
+  const CW = 320, H = 150;
   let chart = '';
   if (vals.length) {
     const mn = Math.min(...vals) * 0.97, mx = Math.max(...vals) * 1.02, rg = mx - mn || 1;
-    const X = (i) => 14 + (vals.length === 1 ? (W - 28) / 2 : (i * (W - 28)) / (vals.length - 1)), Y = (v) => H - 22 - ((v - mn) / rg) * (H - 44);
-    chart = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ex.name)} trend"><line x1="0" x2="${W}" y1="${H - 22}" y2="${H - 22}" stroke="#1C2027"/>${vals.length > 1 ? `<polyline points="${vals.map((v, i) => X(i) + ',' + Y(v)).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` : ''}${vals.map((v, i) => `<circle cx="${X(i)}" cy="${Y(v)}" r="${arr[i].pr ? 4.5 : 3}" fill="${arr[i].pr ? 'var(--accent)' : '#14171C'}" stroke="var(--accent)" stroke-width="2"/>`).join('')}<text x="2" y="12" font-size="10" fill="#8B919C" font-family="Inter">${Math.round(mx)}</text><text x="2" y="${H - 26}" font-size="10" fill="#8B919C" font-family="Inter">${Math.round(mn)}</text><text x="14" y="${H - 6}" font-size="10" fill="#5C626D" font-family="Inter">${arr.length ? shortDate(arr[0].date) : ''}</text><text x="${W - 14}" y="${H - 6}" text-anchor="end" font-size="10" fill="#5C626D" font-family="Inter">${arr.length ? shortDate(arr[arr.length - 1].date) : ''}</text></svg>`;
+    const X = (i) => 14 + (vals.length === 1 ? (CW - 28) / 2 : (i * (CW - 28)) / (vals.length - 1)), Y = (v) => H - 22 - ((v - mn) / rg) * (H - 44);
+    chart = `<svg class="chart" viewBox="0 0 ${CW} ${H}" role="img" aria-label="${esc(ex.name)} trend"><line x1="0" x2="${CW}" y1="${H - 22}" y2="${H - 22}" stroke="#1C2027"/>${vals.length > 1 ? `<polyline points="${vals.map((v, i) => X(i) + ',' + Y(v)).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` : ''}${vals.map((v, i) => `<circle cx="${X(i)}" cy="${Y(v)}" r="${arr[i].pr ? 4.5 : 3}" fill="${arr[i].pr ? 'var(--accent)' : '#14171C'}" stroke="var(--accent)" stroke-width="2"/>`).join('')}<text x="2" y="12" font-size="10" fill="#8B919C" font-family="Inter">${Math.round(mx)}</text><text x="2" y="${H - 26}" font-size="10" fill="#8B919C" font-family="Inter">${Math.round(mn)}</text><text x="14" y="${H - 6}" font-size="10" fill="#5C626D" font-family="Inter">${arr.length ? shortDate(arr[0].date) : ''}</text><text x="${CW - 14}" y="${H - 6}" text-anchor="end" font-size="10" fill="#5C626D" font-family="Inter">${arr.length ? shortDate(arr[arr.length - 1].date) : ''}</text></svg>`;
   }
   const metric = ex.type === 'load' || ex.type === 'bw' ? 'Estimated 1-rep max' : ex.type === 'carry' ? 'Load × distance' : ex.type === 'time' ? 'Best hold' : 'Best reps';
-  const rows = [...arr].reverse().map((x) => `<div class="setrow" style="cursor:default"><span class="grow" style="font-size:14px">${shortDate(x.date)}</span><span class="small soft" style="flex:2">${x.sets.map((s) => esc(setText(id, s, true))).join(' · ')}</span>${x.pr ? '<span class="pr">PR</span>' : ''}<span class="small mute" style="width:44px;text-align:right">${x.e1 ? Math.round(x.e1) : ''}</span></div>`).join('');
-  return `<div class="grab"></div><div class="row" style="justify-content:space-between"><div><div class="small mute">${metric}</div><h3>${esc(ex.name)}</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div><div style="margin:14px 0">${chart}</div>${ex.cue ? `<div class="tip" style="margin-bottom:12px">${ic('flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${esc(ex.cue)}</span></div>` : ''}<div class="label" style="margin-bottom:4px">History</div>${rows}`;
+  const rows = [...arr].reverse().map((x) => `<div class="setrow" style="cursor:default"><span class="grow" style="font-size:14px">${shortDate(x.date)}</span><span class="small soft" style="flex:2">${x.sets.map((s) => esc(setText(id, s, true))).join(' · ')}</span>${x.pr ? '<span class="pr">PR</span>' : ''}<span class="small mute" style="width:44px;text-align:right">${x.e1 ? Math.round(W(x.e1)) : ''}</span></div>`).join('');
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between"><div><div class="small mute">${metric}</div><h3>${esc(ex.name)}</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div><div style="margin:14px 0">${chart}</div>${ex.cue ? `<div class="tip" style="margin-bottom:12px">${ic('flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${esc(ex.cue)}</span></div>` : ''}<div class="label" style="margin-bottom:4px">History</div>${rows}`;
 }
 function vLogSheet(id) {
   const l = stats().logs.find((x) => x.id === id); if (!l) return '';
   const groups = []; for (const s of l.sets) { let g = groups.find((x) => x.ex === s.ex); if (!g) { g = { ex: s.ex, slot: s.slot, sets: [] }; groups.push(g); } g.sets.push(s); }
-  return `<div class="grab"></div><div class="row" style="justify-content:space-between"><div><div class="small mute">${DOW[new Date(l.start).getDay()]} ${shortDate(l.start)} · ${esc(l.gymName || '')}</div><h3>${esc(l.name)}</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between"><div><div class="small mute">${DOW[new Date(l.start).getDay()]} ${shortDate(l.start)} · ${esc(l.gymName || '')}</div><h3>${esc(l.name)}</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
   <div class="tiles" style="margin:14px 0"><div class="tile" style="background:var(--raise)"><b>${l.minutes}</b><span>Minutes</span></div><div class="tile" style="background:var(--raise)"><b>${l.sets.length}</b><span>Sets</span></div><div class="tile" style="background:var(--raise)"><b>${l.rpe || '–'}</b><span>RPE</span></div></div>
   ${groups.map((g) => `<div class="setrow" style="cursor:default;align-items:flex-start;padding:10px 6px"><span class="small acc" style="width:34px;font-weight:700">${esc(g.slot)}</span><span class="grow"><span style="display:block;font-weight:600;font-size:15px">${esc(EX(g.ex).name)}</span><span class="small mute">${g.sets.map((s) => esc(setText(g.ex, s, true)) + (s.pr ? ' (PR)' : '')).join(' · ')}</span></span></div>`).join('')}
   ${l.notes ? `<div class="tip" style="margin-top:12px">${ic('edit', 18, 2.2, 'style="color:var(--accent)"')}<span>${esc(l.notes)}</span></div>` : ''}`;
 }
 function vBodySheet() {
-  return `<div class="grab"></div><h3 style="margin-bottom:14px">Body weight</h3><label class="field">Weight in kg (morning, before breakfast is most consistent)<input id="bodyKg" inputmode="decimal" value="${bodyKg() ?? ''}" placeholder="e.g. 74.0"></label><button class="btn" data-a="saveBody">Save</button>`;
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><h3 style="margin-bottom:14px">Body weight</h3><label class="field">Weight in ${U()} (morning, before breakfast is most consistent)<input id="bodyKg" inputmode="decimal" value="${bodyKg() != null ? fmtNum(W(bodyKg())) : ''}" placeholder="${U() === 'lb' ? 'e.g. 163' : 'e.g. 74.0'}"></label><button class="btn" data-a="saveBody">Save</button>`;
 }
 
 /* ---------- view: plan ---------- */
@@ -753,7 +770,7 @@ function vGymSheet(id) {
   const x = id ? gym(id) : { id: '', name: '', airport: '', group: 'hotel', equip: ['dumbbells', 'bench'] };
   S.gymDraft = S.gymDraft && S.gymDraft._for === id ? S.gymDraft : { ...x, equip: [...(x.equip || [])], _for: id };
   const d = S.gymDraft;
-  return `<div class="grab"></div><h3 style="margin-bottom:14px">${id ? 'Edit ' + esc(x.name) : 'New gym or hotel'}</h3>
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><h3 style="margin-bottom:14px">${id ? 'Edit ' + esc(x.name) : 'New gym or hotel'}</h3>
     <label class="field">Name<input id="gName" value="${esc(d.name)}" placeholder="e.g. Chicago hotel"></label>
     <div class="row" style="gap:10px"><label class="field grow">Airport code<input id="gAirport" value="${esc(d.airport || '')}" maxlength="4" placeholder="ORD" style="text-transform:uppercase"></label>
     <label class="field grow">Type<select id="gGroup"><option value="hotel" ${d.group !== 'home' ? 'selected' : ''}>Layover hotel</option><option value="home" ${d.group === 'home' ? 'selected' : ''}>Home base</option></select></label></div>
@@ -775,6 +792,7 @@ function vSettings() {
       <div id="status" style="margin-top:4px">${statusLine()}</div></div>
     <div class="card pad" style="margin-top:14px"><div class="label" style="margin-bottom:6px">Workout</div>
       <div class="row" style="justify-content:space-between;min-height:52px"><span>Rest between rounds</span><span class="row" style="gap:6px"><button class="iconbtn" data-a="restCfg" data-d="-15" aria-label="Shorter rest">−</button><b style="width:48px;text-align:center">${fmtTime(c.rest)}</b><button class="iconbtn" data-a="restCfg" data-d="15" aria-label="Longer rest">+</button></span></div>
+      <div class="row" style="justify-content:space-between;min-height:52px"><span>Weight unit</span>${unitSeg()}</div>
       <button class="toggle" data-a="soundCfg"><span>Chime when rest ends</span><span class="sw ${c.sound ? 'on' : ''}"></span></button>
       <button class="toggle" data-a="go" data-v="gyms"><span>Gyms and hotels</span><span class="mute">${ic('chev', 16)}</span></button></div>
     <div class="card pad" style="margin-top:14px"><div class="label" style="margin-bottom:10px">Data</div>
@@ -785,14 +803,14 @@ function vSettings() {
 }
 
 /* ---------- sheet & toast ---------- */
-function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#sheet').classList.add('on'); $('#scrim').classList.add('on'); }
+function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#sheet').scrollTop = 0; document.documentElement.classList.add('locked'); $('#sheet').classList.add('on'); $('#scrim').classList.add('on'); }
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
   if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet(); else if (kind === 'overview') h = vOverviewSheet();
   else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg);
   $('#sheet').innerHTML = h;
 }
-function closeSheet() { S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
+function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
 let toastT = null;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2400); }
 
@@ -805,13 +823,15 @@ const A = {
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
   resume() { S.view = 'session'; unlockAudio(); wake(); render(); window.scrollTo(0, 0); },
   sync() { sync(true); },
-  step(d) { const s = S.active.items[+d.i].sets[+d.r]; const f = d.f, delta = parseFloat(d.d); s[f] = Math.max(0, Math.round(((s[f] || 0) + delta) * 100) / 100); save('active'); const inp = document.querySelector(`input[data-in="${f}"][data-i="${d.i}"][data-r="${d.r}"]`); if (inp) inp.value = fmtNum(s[f]); },
+  step(d) { const s = S.active.items[+d.i].sets[+d.r]; const f = d.f, delta = parseFloat(d.d); if (f === 'kg') { const cur = W(s.kg || 0); s.kg = Math.max(0, toKg(Math.round((cur + delta) * 100) / 100)); } else s[f] = Math.max(0, Math.round(((s[f] || 0) + delta) * 100) / 100); save('active'); const inp = document.querySelector(`input[data-in="${f}"][data-i="${d.i}"][data-r="${d.r}"]`); if (inp) inp.value = fmtNum(f === 'kg' ? W(s.kg) : s[f]); },
   logSet(d) { unlockAudio(); logSet(+d.i, +d.r); },
   editSet(d) { const a = S.active; const k = a.steps.findIndex(([i, r]) => i === +d.i && r === +d.r); if (k >= 0) a.cur = k; S.editing = d.i + ':' + d.r; save('active'); render(); },
   jump(d) { const a = S.active; const k = a.steps.findIndex(([i, r]) => i === +d.i && r === +d.r); if (k >= 0) a.cur = k; S.editing = null; save('active'); render(); },
   jumpStep(d) { const k = +d.k; if (k >= 0) { S.active.cur = k; S.editing = null; save('active'); } closeSheet(); render(); window.scrollTo(0, 0); },
   addSet(d) { const it = S.active.items[+d.i]; const last = it.sets[it.sets.length - 1]; it.sets.push({ ...last, done: false, pr: false }); S.active.steps = buildSteps(S.active.items); save('active'); render(); },
   delSet(d) { const it = S.active.items[+d.i]; if (it.sets.length > 1 && !it.sets[it.sets.length - 1].done) { it.sets.pop(); const cur = S.active.steps[S.active.cur]; S.active.steps = buildSteps(S.active.items); const k = cur ? S.active.steps.findIndex(([i, r]) => i === cur[0] && r === cur[1]) : -1; S.active.cur = k >= 0 ? k : Math.max(0, nextOpenAfter(-1)); save('active'); render(); } },
+  skipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { if (!s.done) s.skipped = true; }); a.rest = null; S.editing = null; const nxt = nextOpenAfter(a.cur); if (nxt >= 0) a.cur = nxt; save('active'); render(); toast(nxt >= 0 ? 'Skipped ' + EX(it.ex).name : 'All done – tap Finish'); },
+  unskipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { s.skipped = false; }); const k = a.steps.findIndex(([i, r]) => i === +d.i && !it.sets[r].done); if (k >= 0) a.cur = k; save('active'); render(); },
   swapSheet(d) { S.remember = true; openSheet('swap', +d.i); },
   doSwap(d) { doSwap(+d.i, d.x); },
   doSwapCustom(d) { const v = ($('#exSearch') || {}).value; if (!v || !v.trim()) { toast('Type an exercise name'); return; } doSwap(+d.i, 'custom:' + v.trim().slice(0, 60)); },
@@ -828,7 +848,7 @@ const A = {
   liftSheet(d) { openSheet('lift', d.x); },
   logSheet(d) { openSheet('log', d.id); },
   bodySheet() { openSheet('body'); },
-  saveBody() { const v = parseFloat(($('#bodyKg') || {}).value); if (!(v > 30 && v < 250)) { toast('Enter a weight in kg'); return; } const b = S.data.body = S.data.body || { entries: [] }; const t = ymd(new Date()); b.entries = b.entries.filter((e) => e.date !== t); b.entries.push({ date: t, kg: Math.round(v * 10) / 10 }); save('data'); invalidate(); enqueue({ kind: 'file', name: 'body', data: b }); closeSheet(); render(); toast('Weight saved'); },
+  saveBody() { const v = toKg(parseFloat(($('#bodyKg') || {}).value)); if (!(v > 30 && v < 250)) { toast('Enter your weight in ' + U()); return; } const b = S.data.body = S.data.body || { entries: [] }; const t = ymd(new Date()); b.entries = b.entries.filter((e) => e.date !== t); b.entries.push({ date: t, kg: Math.round(v * 10) / 10 }); save('data'); invalidate(); enqueue({ kind: 'file', name: 'body', data: b }); closeSheet(); render(); toast('Weight saved'); },
   setGym(d) { S.data.gyms.current = d.g; save('data'); enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms }); S.view = 'today'; render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
   toggleEq(d, el) { const dr = S.gymDraft; const i = dr.equip.indexOf(d.e); if (i >= 0) dr.equip.splice(i, 1); else dr.equip.push(d.e); el.classList.toggle('on', i < 0); },
@@ -847,6 +867,7 @@ const A = {
     toast('Connecting…'); await sync(false);
     if (S.syncErr) toast(S.syncErr); else { toast('Connected'); S.view = 'today'; render(); }
   },
+  unit(d) { S.cfg.unit = d.u === 'lb' ? 'lb' : 'kg'; save('cfg'); if (S.sheet) renderSheet(); render(); toast(S.cfg.unit === 'lb' ? 'Showing pounds – stored as kg' : 'Showing kilograms'); },
   restCfg(d) { S.cfg.rest = Math.max(30, Math.min(300, (S.cfg.rest || 90) + +d.d)); save('cfg'); render(); },
   soundCfg() { S.cfg.sound = !S.cfg.sound; save('cfg'); unlockAudio(); if (S.cfg.sound) chime(); render(); },
   export() { const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), data: S.data, logs: S.logs, queue: S.queue }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `train-backup-${ymd(new Date())}.json`; document.body.appendChild(a); a.click(); a.remove(); },
@@ -859,10 +880,24 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target; if (!el.dataset || !el.dataset.in || !S.active) return;
   const s = S.active.items[+el.dataset.i].sets[+el.dataset.r]; const v = parseFloat(String(el.value).replace(',', '.'));
-  s[el.dataset.in] = isNaN(v) ? null : Math.max(0, v); save('active');
+  s[el.dataset.in] = isNaN(v) ? null : Math.max(0, el.dataset.in === 'kg' ? toKg(v) : v); save('active');
 });
 document.addEventListener('input', (e) => { const el = e.target; if (el.dataset && el.dataset.search != null) { const box = $('#exResults'); if (box) box.innerHTML = searchResults(+el.dataset.search, el.value); } });
 document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.dataset.in) setTimeout(() => e.target.select(), 0); });
+
+/* sheet: drag down to close, and stop the page behind from scrolling */
+(function sheetDrag() {
+  const sh = $('#sheet'); let y0 = null, dy = 0, drag = false, fromGrab = false;
+  sh.addEventListener('touchstart', (e) => { if (!sh.classList.contains('on')) return; fromGrab = !!e.target.closest('.grab-zone'); if (fromGrab || sh.scrollTop <= 0) { y0 = e.touches[0].clientY; dy = 0; drag = false; } else y0 = null; }, { passive: true });
+  sh.addEventListener('touchmove', (e) => {
+    if (y0 == null) return; dy = e.touches[0].clientY - y0;
+    if (dy > 0 && (fromGrab || sh.scrollTop <= 0)) { drag = true; e.preventDefault(); sh.style.transition = 'none'; sh.style.transform = `translateY(${dy}px)`; }
+    else if (fromGrab) e.preventDefault();
+  }, { passive: false });
+  const end = () => { if (y0 == null) return; sh.style.transition = ''; sh.style.transform = ''; if (drag && dy > 90) closeSheet(); y0 = null; drag = false; };
+  sh.addEventListener('touchend', end); sh.addEventListener('touchcancel', end);
+  $('#scrim').addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+})();
 
 /* ---------- boot ---------- */
 (async function boot() {

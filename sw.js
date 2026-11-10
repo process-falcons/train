@@ -1,5 +1,5 @@
 /* Offline support: app files load from cache first and refresh in the background. */
-const VERSION = 'train-1.1.1';
+const VERSION = 'train-1.2.0';
 const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
