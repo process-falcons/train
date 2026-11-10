@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.5.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -150,7 +150,7 @@ async function sync(manual) {
   } finally { S.syncing = false; renderStatus(); }
 }
 window.addEventListener('online', () => syncSoon(800));
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncSoon(1200); wake(); tick(); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncSoon(1200); wake(); tick(); setTimeout(nudgeViewport, 60); } });
 
 /* ---------- programme helpers ---------- */
 const P = () => S.data.programme;
@@ -317,7 +317,12 @@ function nextSessionId() {
 }
 function doneThisBlock() { const since = Date.now() - 8 * DAY; return stats().logs.filter((l) => new Date(l.start).getTime() >= since && (P().rotation || []).includes(l.sid)).length; }
 
-const toTop = () => { const el = $('#app'); if (el) el.scrollTop = 0; };
+const toTop = () => window.scrollTo(0, 0);
+/* iOS home-screen apps can start with a viewport one status-bar short, which lifts the bottom bar.
+   A tiny scroll makes iOS re-measure the screen. */
+function nudgeViewport() { if (S.sheet) return; const y = window.scrollY; window.scrollTo(0, y + 1); requestAnimationFrame(() => window.scrollTo(0, y)); }
+window.addEventListener('pageshow', () => setTimeout(nudgeViewport, 60));
+window.addEventListener('orientationchange', () => setTimeout(nudgeViewport, 300));
 /* ---------- render: shell ---------- */
 function render() {
   if (!S.data || !S.data.programme) { S.view = configured() ? 'loading' : 'settings'; }
@@ -973,6 +978,7 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 
 /* ---------- boot ---------- */
 (async function boot() {
+  setTimeout(nudgeViewport, 60); setTimeout(nudgeViewport, 600);
   if (S.active) wake();
   if (S.data && S.data.programme) { S.view = S.active ? 'session' : 'today'; render(); if (configured()) syncSoon(300); return; }
   if (!configured()) { S.view = 'settings'; render(); return; }
