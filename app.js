@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];

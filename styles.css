@@ -8,7 +8,7 @@
   --ease:cubic-bezier(.2,.8,.2,1);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--text);height:100%}
+html,body{margin:0;background:var(--bg);color:var(--text);min-height:100%}
 body{font-family:Inter,system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
 input,textarea{-webkit-user-select:text;user-select:text}
 button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
@@ -16,8 +16,8 @@ a{color:var(--accent)}
 h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.02em;margin:0}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
-#app{max-width:520px;margin:0 auto;min-height:100%;position:relative}
-.view{padding:calc(var(--safe-t) + 18px) 16px calc(var(--safe-b) + 110px);animation:fade .28s var(--ease)}
+#app{max-width:520px;margin:0 auto;min-height:100vh;min-height:100dvh;position:relative}
+.view{min-height:100vh;min-height:100dvh;padding:calc(var(--safe-t) + 18px) 16px calc(var(--safe-b) + 110px);animation:fade .28s var(--ease)}
 .view.session{padding-bottom:calc(var(--safe-b) + 120px)}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
@@ -201,7 +201,7 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .grab-zone{margin:-12px -18px 4px;padding:12px 0 14px;touch-action:none;cursor:grab}
 .grab-zone .grab{margin:0 auto;width:44px;height:5px;border-radius:3px}
 .sheet{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-html.locked,html.locked body{overflow:hidden;height:100%}
+html.locked,html.locked body{overflow:hidden}
 .seg{display:inline-flex;background:var(--card);border-radius:12px;padding:3px;gap:2px}
 .seg button{height:34px;min-width:44px;padding:0 10px;border-radius:9px;font-size:13px;font-weight:600;color:var(--mute)}
 .seg button.on{background:var(--raise);color:var(--text)}
