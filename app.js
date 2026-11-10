@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule'];
@@ -60,7 +60,7 @@ const S = {
   active: LS.get('active', null),
   lastSync: LS.get('lastSync', null),
   syncErr: null, syncing: false,
-  view: 'today', pick: null, progFilter: 'main', editing: null, sheet: null, cache: null,
+  view: 'today', pick: null, gen: LS.get('gen', null), progFilter: 'main', editing: null, sheet: null, cache: null,
 };
 function save(...keys) { for (const k of keys) LS.set(k, S[k]); }
 const configured = () => DEV || (S.cfg.owner && S.cfg.repo && S.cfg.token);
@@ -170,7 +170,33 @@ function resolve(sid, item, g) {
   const lastEx = item.ex[item.ex.length - 1];
   return { ex: lastEx, swapped: item.ex.length > 1, why: 'needs ' + missingFor(EX(lastEx), g).join(', ').toLowerCase() };
 }
-const session = (sid) => P().sessions.find((s) => s.id === sid);
+const session = (sid) => (S.gen && S.gen.id === sid ? S.gen : P().sessions.find((s) => s.id === sid));
+const GEN = {
+  full: { name: 'Full body', slots: [['squat', 'glute'], ['hpush'], ['hinge', 'hamstring', 'glute'], ['hpull', 'vpull'], ['core', 'antirot']] },
+  upper: { name: 'Upper body', slots: [['hpush'], ['hpull'], ['vpush'], ['vpull', 'reardelt'], ['core', 'antirot']] },
+  lower: { name: 'Lower body', slots: [['squat'], ['hinge', 'glute'], ['squat', 'hamstring'], ['calf'], ['core', 'antirot']] },
+  core: { name: 'Core & carry', slots: [['antirot'], ['core'], ['carry'], ['core'], ['reardelt', 'glute']] },
+};
+function generate(focus) {
+  const g = gym(), all = P().exercises, def = GEN[focus] || GEN.full;
+  const recent = new Set(stats().logs.filter((l) => Date.now() - new Date(l.start).getTime() < 2 * DAY).flatMap((l) => l.sets.map((s) => s.ex)));
+  const used = new Set(), usedPat = new Set(); const items = [];
+  def.slots.forEach((pats, i) => {
+    const ok = (id, pt) => all[id].pattern === pt && !all[id].power && id !== 'dead_hang' && hasEquip(all[id], g) && !used.has(id);
+    let pool = [];
+    for (const pt of pats) { if (usedPat.has(pt) && pats.length > 1) continue; pool = Object.keys(all).filter((id) => ok(id, pt)); if (pool.length) { usedPat.add(pt); break; } }
+    if (!pool.length) pool = Object.keys(all).filter((id) => pats.some((pt) => ok(id, pt)));
+    const fresh = pool.filter((id) => !recent.has(id)); if (fresh.length) pool = fresh;
+    if (!pool.length) return;
+    const id = pool[Math.floor(Math.random() * pool.length)]; used.add(id);
+    const ex = all[id];
+    const t = ex.type === 'time' ? { target: '30 s', lo: 30, hi: 40 } : ex.type === 'carry' ? { target: '30 m', lo: 30, hi: 40 } : { target: '8–12', lo: 8, hi: 12 };
+    items.push({ slot: String.fromCharCode(65 + i), ex: [id], sets: 2, ...t });
+  });
+  S.gen = { id: 'gen-' + focus, name: '10-min ' + def.name.toLowerCase(), label: 'Quick workout', minutes: 10, quick: true, focus, blocks: [{ key: 'C', circuit: true, items }] };
+  LS.set('gen', S.gen);
+  return S.gen.id;
+}
 
 /* ---------- history & metrics ---------- */
 function logsSorted() { return Object.values(S.logs).sort((a, b) => (a.start < b.start ? 1 : -1)); }
@@ -281,6 +307,7 @@ function nextSessionId() {
 }
 function doneThisBlock() { const since = Date.now() - 8 * DAY; return stats().logs.filter((l) => new Date(l.start).getTime() >= since && (P().rotation || []).includes(l.sid)).length; }
 
+const toTop = () => { const el = $('#app'); if (el) el.scrollTop = 0; };
 /* ---------- render: shell ---------- */
 function render() {
   if (!S.data || !S.data.programme) { S.view = configured() ? 'loading' : 'settings'; }
@@ -294,6 +321,7 @@ function render() {
   else if (v === 'plan') html = vPlan();
   else if (v === 'gyms') html = vGyms();
   else if (v === 'settings') html = vSettings();
+  else if (v === 'choose') html = vChoose();
   app.innerHTML = html;
   renderNav(); renderRest();
 }
@@ -361,6 +389,7 @@ function vToday() {
     s.blocks.forEach((b) => b.items.forEach((it) => items.push({ b, it, r: resolve(sid, it, g) })));
     const blocks = [];
     for (const b of s.blocks) {
+      if (b.circuit) { items.filter((x) => x.b === b).forEach((x) => blocks.push(`<li><span class="k">${esc(x.it.slot)}</span><span class="grow">${esc(EX(x.r.ex).name)}</span><span class="t">${x.it.sets} × ${esc(x.it.target)}</span></li>`)); continue; }
       const rs = items.filter((x) => x.b === b);
       const names = rs.map((x, i) => (i ? `<span class="mute"> + ${esc(EX(x.r.ex).name)}</span>` : esc(EX(x.r.ex).name))).join('');
       const sw = rs.filter((x) => x.r.swapped && x.r.why).map((x) => `<span class="swapnote">${rs.length > 1 ? esc(x.it.slot) + ' swapped · ' : 'Swapped · '}${esc(x.r.why)}</span>`).join('');
@@ -370,13 +399,14 @@ function vToday() {
     const swaps = items.filter((x) => x.r.swapped).length;
     const isDone = doneLogs.some((l) => l.sid === sid);
     const tag = S.pick && S.pick !== planned ? '<span class="tag amb">YOUR PICK</span>' : sd && sd.sid ? `<span class="tag acc">PLANNED ${isToday ? 'TODAY' : esc(DOW[sel.getDay()].slice(0, 3).toUpperCase())}</span>` : '<span class="tag">UP NEXT</span>';
-    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${(P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
+    h += `<div class="card"><div class="hero"><div class="row" style="gap:6px;flex-wrap:wrap">${tag}<span class="tag">${s.minutes} MIN</span>${isDone ? '<span class="tag acc">DONE</span>' : ''}</div><h2>${esc(s.name)}</h2><div class="small mute" style="font-size:14px">${esc(s.label)}${s.quick ? ` · ${s.blocks[0].items.length} exercises × 2 rounds · 10 s between, 45 s after each round` : (P().rotation || []).includes(sid) ? ` · ${doneThisBlock()} of 3 done this roster block` : ''}</div>${S.pick && S.pick !== planned ? '' : extra}</div>
       <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
       <ol class="exlist">${blocks.join('')}</ol>
+      ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
       <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
   }
 
-  h += `<div class="label" style="padding:4px 4px 0">${sid ? 'Or do a different session' : 'Pick a session anyway'}</div><div class="chips">${S.pick && S.pick !== planned && planned ? `<button class="pill on" data-a="pick" data-s="">Back to plan</button>` : ''}${P().sessions.filter((x) => x.id !== sid).map((x) => `<button class="pill" data-a="pick" data-s="${x.id}">${esc(x.name)}</button>`).join('')}</div>`;
+  h += `<div class="row" style="gap:8px">${S.pick && S.pick !== planned && planned ? `<button class="btn ghost sm" data-a="pick" data-s="" style="flex:1">Back to plan</button>` : ''}<button class="btn ghost" data-a="go" data-v="choose" style="flex:2;height:56px">${ic('list', 20)}${sid ? 'Choose a different workout' : 'Choose a workout'}</button></div>`;
 
   const last = stats().logs[0];
   if (last) {
@@ -404,10 +434,10 @@ function startSession(sid) {
   s.blocks.forEach((b, bi) => b.items.forEach((it) => {
     const r = resolve(sid, it, g);
     const pf = prefill(it, r.ex);
-    items.push({ slot: it.slot, block: b.key, bi, power: !!b.power, optional: !!b.optional, opts: it.ex, ex: r.ex, orig: it.ex[0], swapped: r.swapped, why: r.why, target: it.target, lo: it.lo, hi: it.hi, tip: pf.tip, lastSets: pf.last || null, sets: pf.sets.map((p) => ({ ...p, done: false })) });
+    items.push({ slot: it.slot, block: b.key, bi, circuit: !!b.circuit, power: !!b.power, optional: !!b.optional, opts: it.ex, ex: r.ex, orig: it.ex[0], swapped: r.swapped, why: r.why, target: it.target, lo: it.lo, hi: it.hi, tip: pf.tip, lastSets: pf.last || null, sets: pf.sets.map((p) => ({ ...p, done: false })) });
   }));
   S.active = { id: uid(), sid, name: s.name, label: s.label, gymId: g.id, gymName: g.name, start: Date.now(), items, steps: buildSteps(items), cur: 0, rest: null };
-  save('active'); S.view = 'session'; unlockAudio(); wake(); render(); window.scrollTo(0, 0);
+  save('active'); S.view = 'session'; unlockAudio(); wake(); render(); toTop();
 }
 function curStep() { const a = S.active; return a.steps[a.cur] || a.steps[0]; }
 function stepDone([i, r]) { const s = S.active.items[i].sets[r]; return s.done || s.skipped; }
@@ -421,7 +451,7 @@ function vSession() {
   const blockItems = a.items.filter((x) => x.bi === it.bi);
   const bkeys = [...new Set(a.items.map((x) => x.bi))];
   const segs = bkeys.map((bi) => { const xs = a.items.filter((x) => x.bi === bi); const all = xs.every((x) => x.sets.every((s) => s.done || s.skipped)); return `<span class="${all ? 'done' : bi === it.bi ? 'cur' : ''}"></span>`; }).join('');
-  const kind = it.power ? 'POWER' : it.block === 'FIN' ? 'FINISHER' : it.block === 'WU' ? 'WARM-UP' : it.optional ? 'OPTIONAL' : blockItems.length > 1 ? `SUPERSET ${it.block} · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : `BLOCK ${it.block}`;
+  const kind = it.circuit ? `CIRCUIT · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : it.power ? 'POWER' : it.block === 'FIN' ? 'FINISHER' : it.block === 'WU' ? 'WARM-UP' : it.optional ? 'OPTIONAL' : blockItems.length > 1 ? `SUPERSET ${it.block} · ${blockItems.indexOf(it) + 1} OF ${blockItems.length}` : `BLOCK ${it.block}`;
   const unitHint = ex.perDB ? ' · kg per dumbbell' : '';
   const sideHint = ex.perSide ? ' · per side' : '';
 
@@ -445,14 +475,17 @@ function vSession() {
   let nextCard = '';
   if (nxt >= 0) {
     const [ni, nr] = a.steps[nxt]; const nit = a.items[ni];
-    if (ni !== ii) nextCard = `<button class="nextcard" data-a="jumpStep" data-k="${nxt}"><span class="k">${esc(nit.slot)}</span><span class="grow"><span style="display:block;font-size:15px;font-weight:600">${esc(EX(nit.ex).name)}</span><span class="small mute">Next · set ${nr + 1} of ${nit.sets.length} · ${esc(nit.target)}</span></span><span class="mute">${ic('chev', 16)}</span></button>`;
+    const ns = nit.sets[nr];
+    const after = nextOpenAfter(nxt); let then = '';
+    if (after >= 0 && after !== a.cur) { const [ti, tr] = a.steps[after]; then = `<span class="small mute" style="display:block;margin-top:6px">Then: ${esc(EX(a.items[ti].ex).name)} · set ${tr + 1}</span>`; }
+    nextCard = `<button class="upnext" data-a="jumpStep" data-k="${nxt}"><span class="label acc">Up next${ni === ii ? '' : ' · ' + esc(nit.slot)}</span><span class="row" style="gap:10px;margin-top:6px"><span class="grow"><span class="un-t">${esc(EX(nit.ex).name)}</span><span class="small soft">Set ${nr + 1} of ${nit.sets.length} · ${esc(setText(nit.ex, ns))}</span></span><span class="mute">${ic('chev', 18)}</span></span>${then}</button>`;
   }
   const tip = it.tip ? `<div class="tip ${it.tip.kind === 'info' ? '' : ''}">${ic(it.tip && it.tip.kind === 'up' ? 'up' : 'flag', 18, 2.2, 'style="color:var(--accent)"')}<span>${tipHtml(it.tip)}</span></div>` : '';
   const sw = it.swapped && it.why ? `<div class="tip amb">${ic('swap', 18, 2.2, 'style="color:var(--amber)"')}<span>Swapped from ${esc(EX(it.orig).name)} · ${esc(it.why)}.</span></div>` : '';
 
   return `<div class="view session">
     <div class="shead"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back to Today">${ic('back', 20)}</button>
-      <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><button class="unitchip" data-a="unit" data-u="${U() === 'kg' ? 'lb' : 'kg'}" aria-label="Switch to ${U() === 'kg' ? 'pounds' : 'kilograms'}">${U()}</button> · <span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
+      <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
       <button class="textbtn" data-a="finish">Finish</button></div>
     <div class="segs" style="grid-template-columns:repeat(${bkeys.length},minmax(0,1fr))">${segs}</div>
     <div class="stack">
@@ -479,7 +512,8 @@ function editor(it, ii, r, was) {
   else if (ex.type === 'time') fields = st('sec', ex.perSide ? 'SEC / SIDE' : 'SECONDS', 5, s.sec);
   else fields = st('reps', ex.perSide ? 'REPS / SIDE' : 'REPS', 1, s.reps);
   const one = (ex.type === 'time' || ex.type === 'reps') ? ' one' : '';
-  return `<div class="editor"><div class="top"><span>Set ${r + 1} of ${it.sets.length}</span><span>${esc(was)}</span></div><div class="steppers${one}">${fields}</div><button class="btn" data-a="logSet" data-i="${ii}" data-r="${r}" style="height:52px;font-size:16px">${s.done ? 'Update set' : 'Log set · start rest'}</button></div>`;
+  const needsUnit = ['load', 'bw', 'carry'].includes(ex.type);
+  return `<div class="editor"><div class="top" style="align-items:center"><span>Set ${r + 1} of ${it.sets.length}${was ? ' · ' + esc(was) : ''}</span>${needsUnit ? unitSeg() : ''}</div><div class="steppers${one}">${fields}</div><button class="btn" data-a="logSet" data-i="${ii}" data-r="${r}" style="height:52px;font-size:16px">${s.done ? 'Update set' : 'Log set · start rest'}</button></div>`;
 }
 
 function logSet(ii, r) {
@@ -500,7 +534,7 @@ function logSet(ii, r) {
     const nxt = nextOpenAfter(k >= 0 ? k : a.cur);
     const block = a.items.filter((x) => x.bi === it.bi);
     const sameRoundPartner = nxt >= 0 && a.items[a.steps[nxt][0]].bi === it.bi && a.steps[nxt][1] === r && a.steps[nxt][0] !== ii;
-    const restSec = sameRoundPartner ? 20 : it.power ? (P().defaults.powerRestSec || 75) : (S.cfg.rest || 90);
+    const restSec = sameRoundPartner ? (it.circuit ? 10 : 20) : it.circuit ? 45 : it.power ? (P().defaults.powerRestSec || 75) : (S.cfg.rest || 90);
     if (nxt >= 0) {
       a.cur = nxt;
       const nit = a.items[a.steps[nxt][0]];
@@ -599,7 +633,7 @@ function saveSession() {
   enqueue({ kind: 'log', name, data: log });
   enqueue({ kind: 'file', name: 'gyms', data: S.data.gyms });
   S.active = null; S.pick = null; save('active'); invalidate(); releaseWake();
-  closeSheet(); S.view = 'today'; render(); window.scrollTo(0, 0);
+  closeSheet(); S.view = 'today'; render(); toTop();
   const nPr = log.sets.filter((x) => x.pr).length;
   toast(nPr ? `Saved · ${nPr} PR${nPr > 1 ? 's' : ''}` : 'Workout saved');
 }
@@ -641,6 +675,22 @@ function tick() {
   }
 }
 setInterval(tick, 250);
+
+/* ---------- view: choose a workout ---------- */
+function vChoose() {
+  const g = gym();
+  const card = (s) => {
+    const names = s.blocks.flatMap((b) => b.items.map((it) => EX(resolve(s.id, it, g).ex).name));
+    return `<button class="pickcard" data-a="choose" data-s="${s.id}"><span class="row" style="justify-content:space-between;width:100%"><span class="label acc">${esc(s.label)}</span><span class="small mute">${s.minutes} min</span></span><span class="pc-t">${esc(s.name)}</span><span class="small mute" style="line-height:1.4">${esc(names.slice(0, 5).join(' · '))}${names.length > 5 ? ` +${names.length - 5}` : ''}</span></button>`;
+  };
+  const quick = Object.entries(GEN).map(([k, v]) => `<button class="quickbtn" data-a="genQuick" data-f="${k}"><b>${esc(v.name)}</b><span>10 min</span></button>`).join('');
+  return `<div class="view"><div class="shead" style="margin-bottom:12px"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back">${ic('back', 20)}</button><div class="mid" style="align-items:flex-start;padding-left:8px"><b style="font-size:22px">Choose a workout</b><span class="small mute">${ic('pin', 12, 2.4)} ${esc(g.name)}</span></div></div>
+    <div class="label" style="margin:4px 4px 10px">Your programme</div>
+    <div class="stack" style="gap:10px">${P().sessions.map(card).join('')}</div>
+    <div class="label" style="margin:22px 4px 6px">Quick 10-minute workout</div>
+    <div class="small mute" style="margin:0 4px 10px">Built from what ${esc(g.name)} has. Two rounds, short rests.</div>
+    <div class="quickgrid">${quick}</div></div>`;
+}
 
 /* ---------- view: progress ---------- */
 function spark(vals, w = 72, h = 28, color = 'var(--accent)') {
@@ -817,18 +867,20 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.ad
 
 /* ---------- actions ---------- */
 const A = {
-  go(d) { S.view = d.v; S.editing = null; render(); window.scrollTo(0, 0); },
+  go(d) { S.view = d.v; S.editing = null; render(); toTop(); },
   pick(d) { S.pick = d.s || null; render(); },
+  choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
+  genQuick(d) { S.pick = generate(d.f); S.view = 'today'; render(); toTop(); },
   selDay(d) { S.selDay = d.d === ymd(today0()) ? null : d.d; S.pick = null; render(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
   start(d) { if (S.active && !S.confirmNew) { S.confirmNew = true; toast('A session is in progress – tap Start again to replace it'); setTimeout(() => { S.confirmNew = false; }, 4000); return; } S.confirmNew = false; startSession(d.s); },
-  resume() { S.view = 'session'; unlockAudio(); wake(); render(); window.scrollTo(0, 0); },
+  resume() { S.view = 'session'; unlockAudio(); wake(); render(); toTop(); },
   sync() { sync(true); },
   step(d) { const s = S.active.items[+d.i].sets[+d.r]; const f = d.f, delta = parseFloat(d.d); if (f === 'kg') { const cur = W(s.kg || 0); s.kg = Math.max(0, toKg(Math.round((cur + delta) * 100) / 100)); } else s[f] = Math.max(0, Math.round(((s[f] || 0) + delta) * 100) / 100); save('active'); const inp = document.querySelector(`input[data-in="${f}"][data-i="${d.i}"][data-r="${d.r}"]`); if (inp) inp.value = fmtNum(f === 'kg' ? W(s.kg) : s[f]); },
   logSet(d) { unlockAudio(); logSet(+d.i, +d.r); },
   editSet(d) { const a = S.active; const k = a.steps.findIndex(([i, r]) => i === +d.i && r === +d.r); if (k >= 0) a.cur = k; S.editing = d.i + ':' + d.r; save('active'); render(); },
   jump(d) { const a = S.active; const k = a.steps.findIndex(([i, r]) => i === +d.i && r === +d.r); if (k >= 0) a.cur = k; S.editing = null; save('active'); render(); },
-  jumpStep(d) { const k = +d.k; if (k >= 0) { S.active.cur = k; S.editing = null; save('active'); } closeSheet(); render(); window.scrollTo(0, 0); },
+  jumpStep(d) { const k = +d.k; if (k >= 0) { S.active.cur = k; S.editing = null; save('active'); } closeSheet(); render(); toTop(); },
   addSet(d) { const it = S.active.items[+d.i]; const last = it.sets[it.sets.length - 1]; it.sets.push({ ...last, done: false, pr: false }); S.active.steps = buildSteps(S.active.items); save('active'); render(); },
   delSet(d) { const it = S.active.items[+d.i]; if (it.sets.length > 1 && !it.sets[it.sets.length - 1].done) { it.sets.pop(); const cur = S.active.steps[S.active.cur]; S.active.steps = buildSteps(S.active.items); const k = cur ? S.active.steps.findIndex(([i, r]) => i === cur[0] && r === cur[1]) : -1; S.active.cur = k >= 0 ? k : Math.max(0, nextOpenAfter(-1)); save('active'); render(); } },
   skipEx(d) { const a = S.active, it = a.items[+d.i]; it.sets.forEach((s) => { if (!s.done) s.skipped = true; }); a.rest = null; S.editing = null; const nxt = nextOpenAfter(a.cur); if (nxt >= 0) a.cur = nxt; save('active'); render(); toast(nxt >= 0 ? 'Skipped ' + EX(it.ex).name : 'All done – tap Finish'); },
