@@ -1,10 +1,10 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.14.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
-const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio'];
+const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio', 'hrv_manual'];
 const DAY = 86400000;
 
 /* ---------- small helpers ---------- */
@@ -557,7 +557,15 @@ function cardioCards(items, k) {
   return planned.concat(extra).join('');
 }
 /* ---------- recovery: sleep, resting HR, HRV (Zepp → intervals.icu → cardio.json "health") ---------- */
-const healthDays = () => (S.data.cardio && Array.isArray(S.data.cardio.health) ? S.data.cardio.health : []);
+/* HRV typed in from the Zepp app (hrv_manual.json { "YYYY-MM-DD": 64 }) wins over imported readings; it's its own measure ("zepp") */
+const manualHrv = () => (S.data.hrv_manual && S.data.hrv_manual.days) || {};
+function healthDays() {
+  const base = S.data.cardio && Array.isArray(S.data.cardio.health) ? S.data.cardio.health : [];
+  const m = manualHrv(); if (!Object.keys(m).length) return base;
+  const by = new Map(base.map((x) => [x.date, x]));
+  for (const [k, v] of Object.entries(m)) by.set(k, { ...(by.get(k) || { date: k }), hrv: v, hrvType: 'zepp' });
+  return [...by.values()].sort((p, q) => p.date.localeCompare(q.date));
+}
 const hrs = (h) => `${Math.floor(h)} h ${pad(Math.round((h % 1) * 60))}`;
 /* recovery score 0–100: HRV vs your own 30-day baseline (half), resting HR vs baseline (quarter), sleep (quarter).
    Green ≥ 67 · amber 34–66 · red ≤ 33. A component needs 5 earlier days to count; missing ones are left out and the rest re-weighted. */
@@ -609,7 +617,7 @@ function recoveryCard(k, isToday) {
   if (r.d.rhr != null) bits.push(`<span>RHR <b>${r.d.rhr}</b>${r.rhr && r.rhr.diff ? ` <i style="color:${r.rhr.diff >= 4 ? 'var(--amber)' : r.rhr.diff <= -2 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.rhr.diff)}</i>` : ''}</span>`);
   if (r.d.sleep != null) bits.push(`<span>Sleep <b>${hrs(r.d.sleep)}</b>${r.d.sleepScore ? ` <i>${r.d.sleepScore}</i>` : ''}</span>`);
   if (isToday && r.d.sleep == null) bits.push(`<span>Sleep <i>${S.fetching ? 'fetching…' : 'waiting'}</i></span>`);
-  const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? (isToday ? (S.fetching ? 'Fetching HRV…' : 'HRV not sent yet – run the Morning shortcut, then pull down.') : 'No HRV for this night yet.') : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
+  const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? (isToday ? (S.fetching ? 'Fetching HRV…' : 'Add last night’s HRV from Zepp below.') : 'No HRV for this night yet.') : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
   return `<button class="card rec ${r.band || ''}" data-a="recSheet" data-d="${k}" aria-label="Recovery ${r.score ?? 'not available'} – details">${ring}<div class="grow"><div class="row" style="gap:8px;align-items:baseline"><span class="label">${isToday ? 'Recovery' : 'Recovery · ' + shortDate(k)}</span><b class="rec-l" style="color:${col}">${label}</b></div>
     <div class="rec-bits">${bits.join('')}</div>${advice && isToday ? `<div class="small" style="margin-top:4px;color:var(--soft)">${advice}</div>` : ''}${note}</div><span class="mute" style="align-self:center">${ic('chev', 16)}</span></button>`;
 }
@@ -627,6 +635,25 @@ function recChart(k, f, opt) {
   const dots = days.map((v, i) => (v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="${i === 13 ? 4.5 : 2.5}" fill="${i === 13 ? opt.col : '#5C626D'}"/>`)).join('');
   return `<svg class="chart" viewBox="0 0 300 58" role="img" aria-label="${esc(opt.label)}, last 14 days">${band}${line}${dots}</svg>`;
 }
+function vHrvSheet(k) {
+  const m = manualHrv(), cur = m[k];
+  if (S.hrvDraft == null || S.hrvDraftFor !== k) { const prev = Object.keys(m).filter((x) => x < k).sort().pop(); S.hrvDraft = cur ?? (prev ? m[prev] : 60); S.hrvDraftFor = k; }
+  const dt = parseD(k), wake = new Date(dt);
+  return `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:12px"><div><div class="small mute">Night ending ${DOW[wake.getDay()]} ${wake.getDate()} ${MON[wake.getMonth()]}</div><h3>HRV from Zepp</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
+    <div class="small mute" style="margin-bottom:12px;line-height:1.4">Open the Zepp app and copy last night's HRV.</div>
+    <div class="stepper" style="background:var(--raise);height:72px"><button data-a="hrvStep" data-d="-5" aria-label="5 less" style="font-size:16px">−5</button><button data-a="hrvStep" data-d="-1" aria-label="1 less">−</button>
+      <span class="val"><input id="hrvIn" inputmode="numeric" value="${S.hrvDraft}" aria-label="HRV in milliseconds" style="font-size:30px;width:90px"><small>MS</small></span>
+      <button data-a="hrvStep" data-d="1" aria-label="1 more">+</button><button data-a="hrvStep" data-d="5" aria-label="5 more" style="font-size:16px">+5</button></div>
+    <button class="btn" data-a="hrvSave" style="margin-top:14px">Save</button>
+    ${cur != null ? '<button class="btn danger sm" data-a="hrvClear" style="margin-top:10px">Remove</button>' : ''}`;
+}
+function hrvWrite(k, v) {
+  const f = S.data.hrv_manual && S.data.hrv_manual.days ? S.data.hrv_manual : { days: {} };
+  if (v == null) delete f.days[k]; else f.days[k] = v;
+  f.updated = new Date().toISOString(); S.data.hrv_manual = f; save('data');
+  enqueue({ kind: 'file', name: 'hrv_manual', data: f });
+  S.hrvDraft = null; invalidate(); closeSheet(); render();
+}
 function vRecoverySheet(k) {
   const r = recovery(k); if (!r) return '<div class="empty">No recovery data for this day.</div>';
   const [col, label, advice] = r.score == null ? ['var(--dim)', 'Building baseline', 'The score needs a few nights of data first.'] : BAND[r.band];
@@ -641,7 +668,7 @@ function vRecoverySheet(k) {
   }
   const hrvBand = r.hrv ? [r.hrv.lo, r.hrv.hi] : null;
   h += `<div class="label" style="margin:16px 0 4px">Last 14 days</div>
-    <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>HRV</b><span>${r.d.hrv != null ? `<b>${r.d.hrv} ms</b>` : 'no reading'}${r.hrv ? ` · normal ${r.hrv.lo}–${r.hrv.hi} · ${sgn(r.hrv.pct)}%` : ''}</span></div>${recChart(k, 'hrv', { col: '#5AB0FF', band: hrvBand, minRange: 10, label: 'HRV' })}</div>
+    <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>HRV <button class="small acc" data-a="hrvSheet" data-d="${k}" style="font-weight:700;height:32px;padding:0 6px">${manualHrv()[k] != null ? 'Edit' : 'Add'}</button></b><span>${r.d.hrv != null ? `<b>${r.d.hrv} ms</b>` : 'no reading'}${r.hrv ? ` · normal ${r.hrv.lo}–${r.hrv.hi} · ${sgn(r.hrv.pct)}%` : ''}</span></div>${recChart(k, 'hrv', { col: '#5AB0FF', band: hrvBand, minRange: 10, label: 'HRV' })}</div>
     <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>Resting heart rate</b><span>${r.d.rhr != null ? `<b>${r.d.rhr} bpm</b>` : 'no reading'}${rb != null ? ` · normal ${rb} · ${sgn(r.rhr.diff)}` : ''}</span></div>${recChart(k, 'rhr', { col: '#FF8FA3', band: rb != null ? [rb - 2, rb + 2] : null, minRange: 6, label: 'Resting heart rate' })}</div>
     <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>Sleep</b><span>${r.d.sleep != null ? `<b>${hrs(r.d.sleep)}</b>` : 'no reading'}${r.d.sleepScore ? ` · score ${r.d.sleepScore}` : ''}${r.d.sleepHR ? ` · sleeping HR ${r.d.sleepHR}` : ''}</span></div>${recChart(k, 'sleep', { col: '#B79CFF', band: [7, 9], minRange: 3, label: 'Sleep' })}</div>`;
   const nights = H.filter((x) => x.hrv != null && x.date < k).length;
@@ -651,7 +678,7 @@ function vRecoverySheet(k) {
     <span style="color:var(--accent);font-weight:700">Green 67–100</span> train as planned ·
     <span style="color:var(--amber);font-weight:700">Amber 34–66</span> train, keep intensity in check ·
     <span style="color:var(--red);font-weight:700">Red 0–33</span> keep it easy or rest.<br>
-    HRV is SDNN from Apple Health (Zepp), so compare it only with itself.${nights < r.need ? ` The HRV baseline needs ${r.need} nights – ${nights} so far.` : ''}</div>`;
+    HRV is the nightly figure you type in from the Zepp app – compare it only with itself.${nights < r.need ? ` The HRV baseline needs ${r.need} nights – ${nights} so far.` : ''}</div>`;
   return h;
 }
 function cardioCard(c, act) {
@@ -703,7 +730,7 @@ function vToday() {
   }
   const here = gym(), auto = !!hereAuto();
   h += `<button class="herepill" data-a="go" data-v="gyms" aria-label="Training at ${esc(here.name)}. Change location">${ic('pin', 16, 2.2, 'style="color:var(--accent)"')}<span class="mute">Training at</span><b>${esc(here.name)}</b>${here.unset ? '<span class="amb small">· set up</span>' : auto ? '<span class="small" style="color:var(--amber)">· layover</span>' : ''}<span class="mute">${ic('chev', 14)}</span></button>`;
-  if (sel <= t0) h += recoveryCard(ymd(sel), isToday);
+  if (sel <= t0) { h += recoveryCard(ymd(sel), isToday); if (manualHrv()[ymd(sel)] == null && (isToday || healthDays().some((x) => x.date === ymd(sel)))) h += `<button class="hrvadd" data-a="hrvSheet" data-d="${ymd(sel)}">${ic('plus', 16, 2.4)} Add ${isToday ? 'last night’s' : 'this night’s'} HRV from Zepp</button>`; }
   h += weekStrip(t0, sel);
 
   const sd0 = schedDay(sel), ap = sd0 ? null : autoPlan(sel), sd = sd0 || (ap ? { sid: ap.sid, note: 'Suggested from your roster: ' + ap.why.charAt(0).toLowerCase() + ap.why.slice(1) } : null);
@@ -1284,7 +1311,7 @@ function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#shee
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
   if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet();
-  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg); else if (kind === 'recovery') h = vRecoverySheet(arg);
+  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg); else if (kind === 'recovery') h = vRecoverySheet(arg); else if (kind === 'hrv') h = vHrvSheet(arg);
   $('#sheet').innerHTML = h;
 }
 function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
@@ -1301,6 +1328,10 @@ const A = {
   selDay(d) { const t = today0(), p = parseD(d.d); S.selDay = d.d === ymd(t) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(p) - weekStart(t)) / (7 * DAY)); S.monthOff = (p.getFullYear() - t.getFullYear()) * 12 + p.getMonth() - t.getMonth(); render(); },
   recSheet(d) { openSheet('recovery', d.d); },
   refresh() { freshData(true); },
+  hrvSheet(d) { S.hrvDraft = null; openSheet('hrv', d.d); },
+  hrvStep(d) { const el = $('#hrvIn'); const v = parseInt(el ? el.value : S.hrvDraft, 10) || 0; S.hrvDraft = Math.max(5, Math.min(250, v + +d.d)); if (el) el.value = S.hrvDraft; },
+  hrvSave() { const v = parseInt(($('#hrvIn') || {}).value, 10); if (!(v >= 5 && v <= 250)) { toast('Enter HRV in ms (5–250)'); return; } hrvWrite(S.sheet.arg, v); toast('HRV saved'); },
+  hrvClear() { hrvWrite(S.sheet.arg, null); toast('HRV removed'); },
   shiftDay(d) { const p = S.selDay ? parseD(S.selDay) : today0(); p.setDate(p.getDate() + +d.n); A.selDay({ d: ymd(p) }); },
   goToday() { S.selDay = null; S.pick = null; S.weekOff = 0; S.monthOff = 0; render(); toTop(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
