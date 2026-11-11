@@ -1,6 +1,10 @@
 {
  "updated": "2030-01-01",
- "goal": "Sample goal",
+ "goal": {
+  "name": "Sample race",
+  "date": "2030-06-01",
+  "dateLabel": "1 Jun"
+ },
  "blockLength": 8,
  "phases": [
   {

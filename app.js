@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio'];
@@ -540,19 +540,22 @@ function recovery(k) {
     const L = hv.map(Math.log), mu = avg(L), sd = Math.max(0.06, Math.sqrt(avg(L.map((x) => (x - mu) ** 2))));
     const z = (Math.log(d.hrv) - mu) / sd;
     hrv = { z, pct: Math.round((d.hrv / Math.exp(mu) - 1) * 100), score: clamp(60 + 25 * z, 0, 100), base: Math.round(Math.exp(mu)) };
-    parts.push([hrv.score, 0.5]);
+    hrv.lo = Math.round(Math.exp(mu - sd)); hrv.hi = Math.round(Math.exp(mu + sd));
+    parts.push([hrv.score, 0.5, 'HRV']);
   }
   const rv = series('rhr');
   let rhr = null;
-  if (d.rhr != null && rv.length >= need) { const diff = d.rhr - avg(rv); rhr = { diff: Math.round(diff), score: clamp(60 - 8 * diff, 0, 100) }; parts.push([rhr.score, 0.25]); }
+  if (d.rhr != null && rv.length >= need) { const diff = d.rhr - avg(rv); rhr = { diff: Math.round(diff), base: Math.round(avg(rv)), score: clamp(60 - 8 * diff, 0, 100) }; parts.push([rhr.score, 0.25, 'Resting HR']); }
   let sleep = null;
   if (d.sleepScore != null) sleep = { score: clamp(d.sleepScore, 0, 100) };
   else if (d.sleep != null) sleep = { score: clamp(((d.sleep - 4) / 4) * 100, 0, 100) };
-  if (sleep) parts.push([sleep.score, 0.25]);
+  if (sleep) parts.push([sleep.score, 0.25, 'Sleep']);
   const w = parts.reduce((n, [, x]) => n + x, 0);
   const score = hrv || parts.length >= 2 ? Math.round(parts.reduce((n, [v, x]) => n + v * x, 0) / w) : null;
   const band = score == null ? null : score >= 67 ? 'green' : score >= 34 ? 'amber' : 'red';
-  return { d, score, band, hrv, rhr, sleep, hrvNights: hv.length, need };
+  const contrib = score == null ? [] : parts.map(([v, x, name]) => ({ name, sub: Math.round(v), pts: Math.round(((v - 60) * x) / w), share: Math.round((x / w) * 100) }));
+  if (contrib.length) contrib[contrib.length - 1].pts += score - 60 - contrib.reduce((n, x) => n + x.pts, 0); // so the breakdown adds up exactly
+  return { d, score, band, hrv, rhr, sleep, hrvNights: hv.length, need, contrib };
 }
 const BAND = { green: ['var(--accent)', 'Ready', 'Train as planned.'], amber: ['var(--amber)', 'Moderate', 'Train, but keep the hard parts in check.'], red: ['var(--red)', 'Low', 'Make it easy today – a light session, the snack or rest.'] };
 function recoveryCard(k, isToday) {
@@ -566,8 +569,49 @@ function recoveryCard(k, isToday) {
   if (r.d.rhr != null) bits.push(`<span>RHR <b>${r.d.rhr}</b>${r.rhr && r.rhr.diff ? ` <i style="color:${r.rhr.diff >= 4 ? 'var(--amber)' : r.rhr.diff <= -2 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.rhr.diff)}</i>` : ''}</span>`);
   if (r.d.sleep != null) bits.push(`<span>Sleep <b>${hrs(r.d.sleep)}</b>${r.d.sleepScore ? ` <i>${r.d.sleepScore}</i>` : ''}</span>`);
   const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? 'No HRV for this night yet.' : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
-  return `<div class="card rec ${r.band || ''}" role="group" aria-label="Recovery ${r.score ?? 'not available'}">${ring}<div class="grow"><div class="row" style="gap:8px;align-items:baseline"><span class="label">${isToday ? 'Recovery' : 'Recovery · ' + shortDate(k)}</span><b class="rec-l" style="color:${col}">${label}</b></div>
-    <div class="rec-bits">${bits.join('')}</div>${advice && isToday ? `<div class="small" style="margin-top:4px;color:var(--soft)">${advice}</div>` : ''}${note}</div></div>`;
+  return `<button class="card rec ${r.band || ''}" data-a="recSheet" data-d="${k}" aria-label="Recovery ${r.score ?? 'not available'} – details">${ring}<div class="grow"><div class="row" style="gap:8px;align-items:baseline"><span class="label">${isToday ? 'Recovery' : 'Recovery · ' + shortDate(k)}</span><b class="rec-l" style="color:${col}">${label}</b></div>
+    <div class="rec-bits">${bits.join('')}</div>${advice && isToday ? `<div class="small" style="margin-top:4px;color:var(--soft)">${advice}</div>` : ''}${note}</div><span class="mute" style="align-self:center">${ic('chev', 16)}</span></button>`;
+}
+/* recovery detail sheet: score breakdown, 14-day charts against your normal range, how it works */
+function recChart(k, f, opt) {
+  const H = healthDays(), end = parseD(k), days = [];
+  for (let i = 13; i >= 0; i--) { const d = new Date(end); d.setDate(end.getDate() - i); const x = H.find((y) => y.date === ymd(d)); days.push(x && x[f] != null ? x[f] : null); }
+  const vals = days.filter((v) => v != null);
+  if (vals.length < 2) return `<div class="small mute" style="padding:6px 0 10px">Not enough nights yet.</div>`;
+  const lo = Math.min(...vals, opt.band ? opt.band[0] : Infinity), hi = Math.max(...vals, opt.band ? opt.band[1] : -Infinity), rg = Math.max(opt.minRange || 1, hi - lo);
+  const y = (v) => (52 - ((v - lo) / rg) * 44).toFixed(1), x = (i) => (8 + i * (284 / 13)).toFixed(1);
+  const band = opt.band ? `<rect x="0" y="${y(opt.band[1])}" width="300" height="${(y(opt.band[0]) - y(opt.band[1])).toFixed(1)}" fill="${opt.col}" opacity=".12" rx="4"/>` : '';
+  const pts = days.map((v, i) => (v == null ? null : [x(i), y(v)])).filter(Boolean);
+  const line = `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" fill="none" stroke="${opt.col}" stroke-width="2" stroke-linejoin="round" opacity=".8"/>`;
+  const dots = days.map((v, i) => (v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="${i === 13 ? 4.5 : 2.5}" fill="${i === 13 ? opt.col : '#5C626D'}"/>`)).join('');
+  return `<svg class="chart" viewBox="0 0 300 58" role="img" aria-label="${esc(opt.label)}, last 14 days">${band}${line}${dots}</svg>`;
+}
+function vRecoverySheet(k) {
+  const r = recovery(k); if (!r) return '<div class="empty">No recovery data for this day.</div>';
+  const [col, label, advice] = r.score == null ? ['var(--dim)', 'Building baseline', 'The score needs a few nights of data first.'] : BAND[r.band];
+  const c = 2 * Math.PI * 40, f = r.score == null ? 0 : r.score / 100, sgn = (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v);
+  const dt = parseD(k), H = healthDays();
+  const rb = r.rhr ? r.rhr.base : null;
+  let h = `<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div><div class="row" style="justify-content:space-between;margin-bottom:6px"><div><div class="small mute">${DOW[dt.getDay()]} ${dt.getDate()} ${MON[dt.getMonth()]}</div><h3>Recovery</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>
+    <div class="row" style="gap:16px;margin:6px 0 14px"><div class="rec-ring big"><svg width="100" height="100" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="40" fill="none" stroke="#1C2027" stroke-width="9"/><circle cx="50" cy="50" r="40" fill="none" stroke="${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 50 50)"/></svg><b style="color:${r.score == null ? 'var(--mute)' : col}">${r.score ?? '–'}</b></div>
+      <div class="grow"><b style="font-size:20px;color:${col}">${label}</b><div style="color:var(--soft);margin-top:4px;line-height:1.35">${advice}</div></div></div>`;
+  if (r.contrib.length) {
+    h += `<div class="label" style="margin:4px 0 8px">What made the score</div><div class="rec-break"><div><span>Starting point</span><b>60</b></div>${r.contrib.map((x) => `<div><span>${x.name} <i>${x.share}% of score</i></span><b style="color:${x.pts > 0 ? 'var(--accent)' : x.pts < 0 ? 'var(--amber)' : 'var(--mute)'}">${sgn(x.pts)}</b></div>`).join('')}<div class="tot"><span>Recovery</span><b style="color:${col}">${r.score}</b></div></div>`;
+  }
+  const hrvBand = r.hrv ? [r.hrv.lo, r.hrv.hi] : null;
+  h += `<div class="label" style="margin:16px 0 4px">Last 14 days</div>
+    <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>HRV</b><span>${r.d.hrv != null ? `<b>${r.d.hrv} ms</b>` : 'no reading'}${r.hrv ? ` · normal ${r.hrv.lo}–${r.hrv.hi} · ${sgn(r.hrv.pct)}%` : ''}</span></div>${recChart(k, 'hrv', { col: '#5AB0FF', band: hrvBand, minRange: 10, label: 'HRV' })}</div>
+    <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>Resting heart rate</b><span>${r.d.rhr != null ? `<b>${r.d.rhr} bpm</b>` : 'no reading'}${rb != null ? ` · normal ${rb} · ${sgn(r.rhr.diff)}` : ''}</span></div>${recChart(k, 'rhr', { col: '#FF8FA3', band: rb != null ? [rb - 2, rb + 2] : null, minRange: 6, label: 'Resting heart rate' })}</div>
+    <div class="rec-metric"><div class="row" style="justify-content:space-between"><b>Sleep</b><span>${r.d.sleep != null ? `<b>${hrs(r.d.sleep)}</b>` : 'no reading'}${r.d.sleepScore ? ` · score ${r.d.sleepScore}` : ''}${r.d.sleepHR ? ` · sleeping HR ${r.d.sleepHR}` : ''}</span></div>${recChart(k, 'sleep', { col: '#B79CFF', band: [7, 9], minRange: 3, label: 'Sleep' })}</div>`;
+  const nights = H.filter((x) => x.hrv != null && x.date < k).length;
+  h += `<div class="label" style="margin:16px 0 6px">How it works</div><div class="small" style="color:var(--soft);line-height:1.5">
+    The score starts at 60 – a normal day – and moves with how last night compares with <b>your own</b> last 30 days: HRV counts for half, resting heart rate and sleep for a quarter each.
+    Higher HRV than usual and a lower resting heart rate push it up; a short night or a rise in resting heart rate pull it down.<br>
+    <span style="color:var(--accent);font-weight:700">Green 67–100</span> train as planned ·
+    <span style="color:var(--amber);font-weight:700">Amber 34–66</span> train, keep intensity in check ·
+    <span style="color:var(--red);font-weight:700">Red 0–33</span> keep it easy or rest.<br>
+    HRV is SDNN from Apple Health (Zepp), so compare it only with itself.${nights < r.need ? ` The HRV baseline needs ${r.need} nights – ${nights} so far.` : ''}</div>`;
+  return h;
 }
 function cardioCard(c, act) {
   return `<div class="card cardio ${act ? 'done' : ''}"><div class="row" style="gap:12px;align-items:flex-start"><span class="cardio-ic">${act ? ic('check', 20, 2.6) : ic(c.sport === 'bike' ? 'bike' : 'pulse', 20, 2)}</span><div class="grow">
@@ -1199,7 +1243,7 @@ function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#shee
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet; let h = '';
   if (kind === 'swap') h = vSwapSheet(arg); else if (kind === 'finish') h = vFinishSheet();
-  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg);
+  else if (kind === 'lift') h = vLiftSheet(arg); else if (kind === 'log') h = vLogSheet(arg); else if (kind === 'body') h = vBodySheet(); else if (kind === 'gym') h = vGymSheet(arg); else if (kind === 'recovery') h = vRecoverySheet(arg);
   $('#sheet').innerHTML = h;
 }
 function closeSheet() { document.documentElement.classList.remove('locked'); S.sheet = null; S.gymDraft = null; S.confirmDiscard = false; $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on'); }
@@ -1214,6 +1258,7 @@ const A = {
   choose(d) { S.pick = d.s; S.view = 'today'; render(); toTop(); },
   genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; if (d.keep) { const y = window.scrollY; render(); window.scrollTo(0, y); } else { render(); toTop(); } },
   selDay(d) { const t = today0(), p = parseD(d.d); S.selDay = d.d === ymd(t) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(p) - weekStart(t)) / (7 * DAY)); S.monthOff = (p.getFullYear() - t.getFullYear()) * 12 + p.getMonth() - t.getMonth(); render(); },
+  recSheet(d) { openSheet('recovery', d.d); },
   shiftDay(d) { const p = S.selDay ? parseD(S.selDay) : today0(); p.setDate(p.getDate() + +d.n); A.selDay({ d: ymd(p) }); },
   goToday() { S.selDay = null; S.pick = null; S.weekOff = 0; S.monthOff = 0; render(); toTop(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
@@ -1317,12 +1362,28 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 
 /* screens with a back arrow: swipe right, or pull down from the top, to go back */
 /* Today: swipe left or right anywhere to move a day forward or back */
+/* bottom bar: swipe left or right to move between Today, Progress and Plan */
+(function navSwipe() {
+  const TABS = ['today', 'progress', 'plan'];
+  let x0 = null, y0 = 0, dx = 0, swallow = 0;
+  const nav = $('#nav');
+  nav.addEventListener('click', (e) => { if (performance.now() < swallow) { e.preventDefault(); e.stopPropagation(); } }, true);
+  nav.addEventListener('touchstart', (e) => { x0 = e.touches.length === 1 ? e.touches[0].clientX : null; y0 = x0 == null ? 0 : e.touches[0].clientY; dx = 0; }, { passive: true });
+  nav.addEventListener('touchmove', (e) => { if (x0 == null) return; dx = e.touches[0].clientX - x0; if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(e.touches[0].clientY - y0)) e.preventDefault(); }, { passive: false });
+  nav.addEventListener('touchend', () => {
+    if (x0 == null) return; x0 = null;
+    const i = TABS.indexOf(S.view); if (i < 0 || Math.abs(dx) < 50) return;
+    const j = i + (dx < 0 ? 1 : -1); swallow = performance.now() + 400;
+    if (j >= 0 && j < TABS.length) A.go({ v: TABS[j] });
+  });
+})();
+
 (function daySwipe() {
   let x0 = null, y0 = 0, dx = 0, dy = 0, mode = null, el = null, swallow = 0;
   document.addEventListener('click', (e) => { if (performance.now() < swallow) { e.preventDefault(); e.stopPropagation(); } }, true);
   document.addEventListener('touchstart', (e) => {
     x0 = null;
-    if (S.view !== 'today' || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, select')) return;
+    if (S.view !== 'today' || S.sheet || e.touches.length > 1 || e.target.closest('.chips, input, textarea, select, #nav')) return;
     if (e.touches[0].clientX < 20) return; // leave the screen edge alone
     el = $('#app > .view .stack'); if (!el) return;
     x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = dy = 0; mode = null;
