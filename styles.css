@@ -244,6 +244,10 @@ h1,h2,h3,.display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.
 .rec-ring b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Space Grotesk",Inter,system-ui,sans-serif;font-size:22px}
 .rec-l{font-size:15px}
 .rec-ring.big{width:100px;height:100px}
+.card.rec.wait{color:var(--soft)}
+.rec-ring .spin{transform-origin:33px 33px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ptr{position:fixed;top:calc(var(--safe-t) + 10px);left:0;right:0;text-align:center;font-size:13px;font-weight:600;color:var(--accent);opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
 .rec-ring.big b{font-size:32px}
 .rec-break{background:var(--raise);border-radius:var(--r-m);padding:4px 14px}
 .rec-break div{display:flex;justify-content:space-between;align-items:center;min-height:40px;border-bottom:1px solid var(--line2);font-size:14px;color:var(--soft)}

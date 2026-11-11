@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio'];
@@ -157,7 +157,41 @@ async function sync(manual) {
   } finally { S.syncing = false; renderStatus(); }
 }
 window.addEventListener('online', () => syncSoon(800));
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncSoon(1200); wake(); tick(); setTimeout(nudgeViewport, 60); } });
+
+/* ---------- fresh recovery data: ask GitHub to run the intervals.icu import now (needs the key's Actions: Read and write) ---------- */
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+function ghApi(path, opt = {}) {
+  const headers = { Authorization: 'Bearer ' + S.cfg.token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  if (opt.body) headers['Content-Type'] = 'application/json';
+  return fetch(`https://api.github.com/repos/${encodeURIComponent(S.cfg.owner)}/${encodeURIComponent(S.cfg.repo)}/${path}`, { ...opt, headers, cache: 'no-store' });
+}
+function todayHealth() { const k = ymd(today0()); return healthDays().find((x) => x.date === k) || null; }
+const needsFresh = () => { const x = todayHealth(); return !x || x.sleep == null || x.hrv == null; };
+async function freshData(manual) {
+  if (S.fetching || !configured()) return;
+  const h = new Date().getHours();
+  if (!manual && (!needsFresh() || h < 4 || h >= 15 || Date.now() - LS.get('lastFetch', 0) < 20 * 60000)) return;
+  LS.set('lastFetch', Date.now());
+  S.fetching = true; S.fetchNote = null; render();
+  try {
+    if (DEV) { await sleepMs(500); await sync(false); return; }   // dev mode: just re-read the local files
+    if (!navigator.onLine) { S.fetchNote = 'Offline – try again when you have signal'; return; }
+    const t0 = Date.now();
+    const r = await ghApi('actions/workflows/cardio.yml/dispatches', { method: 'POST', body: JSON.stringify({ ref: 'main' }) });
+    if (r.status === 403 || r.status === 404) { S.fetchNote = 'Can’t start the import – the GitHub key needs Actions: Read and write'; await sync(false); return; }
+    if (!r.ok) throw new Error('GitHub error ' + r.status);
+    for (let i = 0; i < 20; i++) {   // the job takes ~30–60 s
+      await sleepMs(i ? 8000 : 15000);
+      const j = await (await ghApi('actions/workflows/cardio.yml/runs?event=workflow_dispatch&per_page=1')).json();
+      const run = j.workflow_runs && j.workflow_runs[0];
+      if (run && new Date(run.created_at).getTime() > t0 - 60000 && run.status === 'completed') break;
+    }
+    await sync(false);
+    if (manual && needsFresh()) S.fetchNote = todayHealth() ? null : 'Nothing for last night yet – open Zepp so it syncs, then pull down again';
+  } catch (e) { S.fetchNote = e.message || 'Couldn’t fetch'; }
+  finally { S.fetching = false; if (S.view === 'today') render(); renderStatus(); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncSoon(1200); setTimeout(() => freshData(false), 3000); wake(); tick(); setTimeout(nudgeViewport, 60); } });
 
 /* ---------- programme helpers ---------- */
 const P = () => S.data.programme;
@@ -400,7 +434,7 @@ function statusLine() {
   if (!configured()) return `<button class="row small mute" data-a="go" data-v="settings" style="padding:14px 6px"><span class="syncdot off"></span>Not connected to GitHub – tap to set up</button>`;
   const n = S.queue.length;
   const dot = S.syncErr ? 'pend' : n ? 'pend' : '';
-  const txt = S.syncing ? 'Syncing…' : S.syncErr ? `${esc(S.syncErr)}${n ? ` · ${n} waiting` : ''}` : n ? `${n} change${n > 1 ? 's' : ''} waiting to sync` : `Synced ${ago(S.lastSync)}`;
+  const txt = S.fetching ? 'Fetching from intervals.icu…' : S.syncing ? 'Syncing…' : S.syncErr ? `${esc(S.syncErr)}${n ? ` · ${n} waiting` : ''}` : n ? `${n} change${n > 1 ? 's' : ''} waiting to sync` : `Synced ${ago(S.lastSync)}`;
   return `<button class="row small mute" data-a="sync" style="padding:14px 6px;width:100%"><span class="syncdot ${dot}"></span><span class="grow" style="text-align:left">${txt}</span>${DEV ? '<span class="tag amb">DEV</span>' : ''}</button>`;
 }
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusLine(); }
@@ -558,8 +592,14 @@ function recovery(k) {
   return { d, score, band, hrv, rhr, sleep, hrvNights: hv.length, need, contrib };
 }
 const BAND = { green: ['var(--accent)', 'Ready', 'Train as planned.'], amber: ['var(--amber)', 'Moderate', 'Train, but keep the hard parts in check.'], red: ['var(--red)', 'Low', 'Make it easy today – a light session, the snack or rest.'] };
+function waitingCard() {
+  const busy = S.fetching, note = S.fetchNote;
+  return `<button class="card rec wait" data-a="refresh" aria-label="Recovery – waiting for last night's data. Tap to fetch"><div class="rec-ring"><svg width="66" height="66" viewBox="0 0 66 66" aria-hidden="true"><circle cx="33" cy="33" r="27" fill="none" stroke="#1C2027" stroke-width="6"/>${busy ? '<circle class="spin" cx="33" cy="33" r="27" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="40 130"/>' : ''}</svg><b style="color:var(--mute)">${ic('moon', 20, 2)}</b></div>
+    <div class="grow"><span class="label">Recovery</span><div style="font-weight:600;margin-top:4px">${busy ? 'Fetching last night’s data…' : 'Waiting for last night’s data'}</div>
+    <div class="small mute" style="margin-top:3px">${note ? esc(note) : busy ? 'About a minute.' : 'Pull down or tap to check again.'}</div></div></button>`;
+}
 function recoveryCard(k, isToday) {
-  const r = recovery(k); if (!r) return '';
+  const r = recovery(k); if (!r) return isToday ? waitingCard() : '';
   const [col, label, advice] = r.score == null ? ['var(--dim)', 'Building baseline', ''] : BAND[r.band];
   const c = 2 * Math.PI * 27, f = r.score == null ? 0 : r.score / 100;
   const ring = `<div class="rec-ring"><svg width="66" height="66" viewBox="0 0 66 66" aria-hidden="true"><circle cx="33" cy="33" r="27" fill="none" stroke="#1C2027" stroke-width="6"/><circle cx="33" cy="33" r="27" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 33 33)"/></svg><b style="color:${r.score == null ? 'var(--mute)' : col}">${r.score == null ? '–' : r.score}</b></div>`;
@@ -568,7 +608,8 @@ function recoveryCard(k, isToday) {
   if (r.d.hrv != null) bits.push(`<span>HRV <b>${r.d.hrv}</b>${r.hrv ? ` <i style="color:${r.hrv.z < -1 ? 'var(--amber)' : r.hrv.z > 0.5 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.hrv.pct)}%</i>` : ''}</span>`);
   if (r.d.rhr != null) bits.push(`<span>RHR <b>${r.d.rhr}</b>${r.rhr && r.rhr.diff ? ` <i style="color:${r.rhr.diff >= 4 ? 'var(--amber)' : r.rhr.diff <= -2 ? 'var(--accent)' : 'var(--mute)'}">${sgn(r.rhr.diff)}</i>` : ''}</span>`);
   if (r.d.sleep != null) bits.push(`<span>Sleep <b>${hrs(r.d.sleep)}</b>${r.d.sleepScore ? ` <i>${r.d.sleepScore}</i>` : ''}</span>`);
-  const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? 'No HRV for this night yet.' : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
+  if (isToday && r.d.sleep == null) bits.push(`<span>Sleep <i>${S.fetching ? 'fetching…' : 'waiting'}</i></span>`);
+  const note = !r.hrv ? `<div class="small mute" style="margin-top:4px">${r.d.hrv == null ? (isToday ? (S.fetching ? 'Fetching HRV…' : 'HRV not sent yet – run the Morning shortcut, then pull down.') : 'No HRV for this night yet.') : `HRV baseline: ${Math.min(r.hrvNights, r.need)} of ${r.need} nights`}${r.score == null ? '' : ' – score from resting HR and sleep for now.'}</div>` : '';
   return `<button class="card rec ${r.band || ''}" data-a="recSheet" data-d="${k}" aria-label="Recovery ${r.score ?? 'not available'} – details">${ring}<div class="grow"><div class="row" style="gap:8px;align-items:baseline"><span class="label">${isToday ? 'Recovery' : 'Recovery · ' + shortDate(k)}</span><b class="rec-l" style="color:${col}">${label}</b></div>
     <div class="rec-bits">${bits.join('')}</div>${advice && isToday ? `<div class="small" style="margin-top:4px;color:var(--soft)">${advice}</div>` : ''}${note}</div><span class="mute" style="align-self:center">${ic('chev', 16)}</span></button>`;
 }
@@ -1259,6 +1300,7 @@ const A = {
   genQuick(d) { if (d.f === 'snack') { const keep = S.gen; generate('snack'); S.gen = keep; S.snackShuffle = { ...(S.lastGen), id: 'snack', key: 'snack-' + ymd(today0()) + '-' + gym().id }; S.pick = 'snack'; } else S.pick = generate(d.f); S.view = 'today'; if (d.keep) { const y = window.scrollY; render(); window.scrollTo(0, y); } else { render(); toTop(); } },
   selDay(d) { const t = today0(), p = parseD(d.d); S.selDay = d.d === ymd(t) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(p) - weekStart(t)) / (7 * DAY)); S.monthOff = (p.getFullYear() - t.getFullYear()) * 12 + p.getMonth() - t.getMonth(); render(); },
   recSheet(d) { openSheet('recovery', d.d); },
+  refresh() { freshData(true); },
   shiftDay(d) { const p = S.selDay ? parseD(S.selDay) : today0(); p.setDate(p.getDate() + +d.n); A.selDay({ d: ymd(p) }); },
   goToday() { S.selDay = null; S.pick = null; S.weekOff = 0; S.monthOff = 0; render(); toTop(); },
   weekNav(d) { S.weekOff = (S.weekOff || 0) + +d.d; render(); },
@@ -1362,6 +1404,33 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
 
 /* screens with a back arrow: swipe right, or pull down from the top, to go back */
 /* Today: swipe left or right anywhere to move a day forward or back */
+/* Today: pull down from the top to fetch last night's data */
+(function pullRefresh() {
+  const ind = document.createElement('div'); ind.className = 'ptr'; ind.setAttribute('aria-hidden', 'true'); document.body.appendChild(ind);
+  let y0 = null, x0 = 0, dy = 0, on = false, el = null;
+  document.addEventListener('touchstart', (e) => {
+    y0 = null;
+    if (S.view !== 'today' || S.sheet || e.touches.length > 1 || window.scrollY > 0 || e.target.closest('#nav, input, textarea, select')) return;
+    el = $('#app > .view'); y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0; on = false;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = e.touches[0].clientY - y0; const dx = e.touches[0].clientX - x0;
+    if (!on) { if (dy < 12 || Math.abs(dx) > dy || window.scrollY > 0) { if (Math.abs(dx) > 12 || dy < -6) y0 = null; return; } on = true; el.style.transition = 'none'; }
+    e.preventDefault();
+    const pull = Math.min(110, dy * 0.45);
+    el.style.transform = `translateY(${pull}px)`;
+    ind.style.opacity = String(Math.min(1, pull / 60)); ind.textContent = pull >= 60 ? 'Release to fetch last night’s data' : 'Pull to fetch last night’s data';
+  }, { passive: false });
+  const end = () => {
+    if (y0 == null) return; y0 = null;
+    if (!on) return; on = false;
+    el.style.transition = 'transform .25s var(--ease)'; el.style.transform = ''; ind.style.opacity = '0';
+    if (dy * 0.45 >= 60) A.refresh();
+  };
+  document.addEventListener('touchend', end); document.addEventListener('touchcancel', end);
+})();
+
 /* bottom bar: swipe left or right to move between Today, Progress and Plan */
 (function navSwipe() {
   const TABS = ['today', 'progress', 'plan'];
@@ -1457,7 +1526,7 @@ document.addEventListener('focusin', (e) => { if (e.target.dataset && e.target.d
   try { history.scrollRestoration = 'manual'; } catch (e) { /* older browsers */ }
   setTimeout(nudgeViewport, 60); setTimeout(nudgeViewport, 600);
   if (S.active) wake();
-  if (S.data && S.data.programme) { S.view = S.active ? 'session' : 'today'; S.follow = S.active ? 'jump' : false; render(); if (configured()) syncSoon(300); return; }
+  if (S.data && S.data.programme) { S.view = S.active ? 'session' : 'today'; S.follow = S.active ? 'jump' : false; render(); if (configured()) { syncSoon(300); setTimeout(() => freshData(false), 2500); } return; }
   if (!configured()) { S.view = 'settings'; render(); return; }
   S.view = 'loading'; render();
   try { await pullAll(); S.lastSync = Date.now(); save('lastSync'); } catch (e) { S.syncErr = e.message; }

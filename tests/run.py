@@ -104,6 +104,21 @@ def t_basics(page):
     check("breakdown adds up exactly to the score", total == score["score"], (total, score["score"], parts))
     check("14-day charts for HRV, resting HR and sleep with normal range", sh.locator("svg.chart").count() == 3 and "normal" in stx)
     page.locator('#sheet [data-a="closeSheet"]').tap(); wait(page, 300)
+    # no data for last night yet → waiting card; HRV only → sleep "waiting"
+    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); render()"); wait(page, 200)
+    wc = page.locator(".card.rec.wait")
+    check("no data yet: waiting card instead of nothing", wc.count() == 1 and "Waiting for last night" in wc.inner_text(), wc.inner_text() if wc.count() else "missing")
+    page.evaluate("S.data.cardio.health.push({ date: '2030-01-08', hrv: 60, hrvType: 'sdnn' }); render()"); wait(page, 200)
+    check("HRV in, sleep not yet: card shows HRV and 'Sleep waiting'", "HRV" in page.locator(".card.rec").inner_text() and "waiting" in page.locator(".card.rec").inner_text(), page.locator(".card.rec").inner_text())
+    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); render(); window.scrollTo(0, 0)"); wait(page, 200)
+    page.evaluate("""() => { const el = document.querySelector('.head'); const x = 200, y0 = 140;
+      const ev = (type, y) => { const e = new Event(type, { bubbles: true, cancelable: true }); const pt = [{ identifier: 1, target: el, clientX: x, clientY: y }];
+        Object.defineProperty(e, 'touches', { value: type === 'touchend' ? [] : pt }); Object.defineProperty(e, 'changedTouches', { value: pt }); return e; };
+      el.dispatchEvent(ev('touchstart', y0)); for (let i = 1; i <= 8; i++) el.dispatchEvent(ev('touchmove', y0 + i * 30)); el.dispatchEvent(ev('touchend', y0 + 240)); }""")
+    wait(page, 150)
+    check("pull down on Today starts a fetch", page.evaluate("S.fetching") is True and "Fetching" in page.locator(".card.rec").inner_text())
+    wait(page, 1500)
+    check("after the fetch the card fills in from the data files", page.locator(".card.rec.wait").count() == 0 and page.locator(".card.rec").count() == 1 and page.evaluate("S.fetching") is False)
     check("lime labels really are lime", page.evaluate("getComputedStyle(document.querySelector('.label.acc') || document.body).color") in ("rgb(198, 244, 50)",)
           or page.locator(".label.acc").count() == 0)
     check("no sideways scrolling on Today", page.evaluate("document.scrollingElement.scrollWidth <= innerWidth"))
