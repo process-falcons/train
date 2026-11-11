@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio', 'hrv_manual'];
@@ -23,8 +23,10 @@ const fmtNum = (n) => (n == null || isNaN(n)) ? '–' : (Math.round(n * 10) / 10
 const fmtTime = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
 const LB = 2.20462;
 const U = () => (S.cfg.unit === 'lb' ? 'lb' : 'kg');
-const W = (kg) => (kg == null || isNaN(kg) ? kg : U() === 'lb' ? Math.round(kg * LB * 2) / 2 : Math.round(kg * 10) / 10);
-const toKg = (v) => (v == null || isNaN(v) ? v : U() === 'lb' ? Math.round((v / LB) * 1000) / 1000 : v);
+const Wu = (kg, u) => (kg == null || isNaN(kg) ? kg : u === 'lb' ? Math.round(kg * LB * 2) / 2 : Math.round(kg * 10) / 10);
+const toKgU = (v, u) => (v == null || isNaN(v) ? v : u === 'lb' ? Math.round((v / LB) * 1000) / 1000 : v);
+const W = (kg) => Wu(kg, U());
+const toKg = (v) => toKgU(v, U());
 const lbStep = (incKg) => { const x = incKg * LB; return x < 4 ? 2.5 : Math.round(x / 5) * 5; };
 const stepU = (incKg) => (U() === 'lb' ? lbStep(incKg) : incKg);
 function fmtVol(v) { if (U() === 'lb') { const w = v * LB; return w >= 10000 ? (w / 1000).toFixed(1) + 'k lb' : Math.round(w) + ' lb'; } return v >= 1000 ? fmtNum(v / 1000) + ' t' : Math.round(v) + ' kg'; }
@@ -440,7 +442,7 @@ function statusLine() {
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusLine(); }
 
 /* ---------- view: today ---------- */
-const unitSeg = (action = 'unit', tag = 'div') => `<${tag} class="seg" role="group" aria-label="Weight unit"><button data-a="${action}" data-u="kg" class="${U() === 'kg' ? 'on' : ''}">kg</button><button data-a="${action}" data-u="lb" class="${U() === 'lb' ? 'on' : ''}">lb</button></${tag}>`;
+const unitSeg = (action = 'unit', tag = 'div', cur = U()) => `<${tag} class="seg" role="group" aria-label="Weight unit"><button data-a="${action}" data-u="kg" class="${cur === 'kg' ? 'on' : ''}">kg</button><button data-a="${action}" data-u="lb" class="${cur === 'lb' ? 'on' : ''}">lb</button></${tag}>`;
 const SHORT = { s1: 'S1', s2: 'S2', s3: 'S3', hotel: 'Hotel', snack: 'Snack' };
 function schedDay(d) { const s = S.data.schedule; return s && s.days ? s.days[ymd(d)] || null : null; }
 /* ---------- roster: duties from roster.json, and sessions suggested from them ---------- */
@@ -757,8 +759,9 @@ function vToday() {
       const rs = items.filter((x) => x.b === b);
       const names = rs.map((x, i) => (i ? `<span class="mute"> + ${esc(EX(x.r.ex).name)}</span>` : esc(EX(x.r.ex).name))).join('');
       const sw = rs.filter((x) => x.r.swapped && x.r.why).map((x) => `<span class="swapnote">${rs.length > 1 ? esc(x.it.slot) + ' swapped · ' : 'Swapped · '}${esc(x.r.why)}</span>`).join('');
-      const sets = Math.max(...rs.map((x) => x.it.sets));
-      blocks.push(`<li><span class="k ${b.power ? 'p' : ''}">${b.key}</span><span class="grow">${names}${sw}</span><span class="t">${sets} × ${esc(rs[0].it.target)}</span></li>`);
+      // each exercise's own sets × target; one line when the pair matches, otherwise one line each in the same order as the names
+      const tg = [...new Set(rs.map((x) => `${x.it.sets} × ${esc(x.it.target)}`))];
+      blocks.push(`<li><span class="k ${b.power ? 'p' : ''}">${b.key}</span><span class="grow">${names}${sw}</span><span class="t">${rs.length > 1 && tg.length > 1 ? rs.map((x) => `${x.it.sets} × ${esc(x.it.target)}`).join('<br>') : tg[0]}</span></li>`);
     }
     const swaps = items.filter((x) => x.r.swapped).length;
     const isDone = doneLogs.some((l) => l.sid === sid);
@@ -1262,22 +1265,29 @@ function vGyms() {
     <div class="label" style="margin:18px 4px 8px">Layover hotels</div>${hotels.map(card).join('') || '<div class="empty">No hotels yet.</div>'}
     <button class="btn ghost sm" data-a="editGym" data-g="" style="margin-top:6px;color:var(--accent)">${ic('plus', 18)} Add a gym or hotel</button></div>`;
 }
-/* the dumbbell field shows the current unit; an untouched value keeps its stored kg so it never drifts through rounding */
+/* each gym remembers the unit its dumbbells are labelled in (dbUnit; kg unless chosen or clearly entered in lb) – separate from the app-wide kg/lb setting.
+   The weight itself is stored in kg; an untouched value keeps its stored kg so it never drifts through rounding */
+function dbUnit(g) {
+  if (g && g.dbUnit) return g.dbUnit === 'lb' ? 'lb' : 'kg';
+  // not chosen yet: a limit that is a round number of pounds but not of kilos (22.68 kg = 50 lb) was entered in lb
+  const kg = g && g.maxDB, lb = kg * LB;
+  return kg > 0 && Math.abs(lb - Math.round(lb / 2.5) * 2.5) < 0.06 && Math.abs(kg - Math.round(kg * 2) / 2) > 0.06 ? 'lb' : 'kg';
+}
 function gymMaxKg(d) {
   const el = $('#gMax'); if (!el) return d.maxDB ?? null;
   const raw = el.value.trim(); if (raw === el.dataset.orig) return d.maxDB ?? null;
-  const v = num(raw); return isNaN(v) ? null : toKg(v);
+  const v = num(raw); return isNaN(v) ? null : toKgU(v, dbUnit(d));
 }
 function vGymSheet(id) {
   const x = id ? gym(id) : { id: '', name: '', airport: '', group: 'hotel', equip: ['dumbbells', 'bench'] };
   S.gymDraft = S.gymDraft && S.gymDraft._for === id ? S.gymDraft : { ...x, equip: [...(x.equip || [])], _for: id };
-  const d = S.gymDraft;
+  const d = S.gymDraft, u = dbUnit(d), shown = d.maxDB == null ? '' : fmtNum(Wu(d.maxDB, u));
   return `<h3 style="margin-bottom:14px">${id ? 'Edit ' + esc(x.name) : 'New gym or hotel'}</h3>
     <label class="field">Name<input id="gName" value="${esc(d.name)}" placeholder="e.g. Chicago hotel"></label>
     <div class="row" style="gap:10px"><label class="field grow">Airport code<input id="gAirport" value="${esc(d.airport || '')}" maxlength="4" placeholder="ORD" style="text-transform:uppercase"></label>
     <label class="field grow">Type<select id="gGroup"><option value="hotel" ${d.group !== 'home' ? 'selected' : ''}>Layover hotel</option><option value="home" ${d.group === 'home' ? 'selected' : ''}>Home base</option></select></label></div>
     <div class="field">Equipment – tick what it has<div class="wrapchips" style="margin-top:4px">${EQUIP.map(([k, l]) => `<button class="chip ${d.equip.includes(k) ? 'on' : ''}" data-a="toggleEq" data-e="${k}">${l}</button>`).join('')}</div></div>
-    <div class="field"><span class="row" style="justify-content:space-between">Heaviest dumbbell (optional)${unitSeg('gymUnit', 'span')}</span><span class="row" style="gap:10px"><input id="gMax" inputmode="decimal" value="${d.maxDB == null ? '' : fmtNum(W(d.maxDB))}" data-orig="${d.maxDB == null ? '' : fmtNum(W(d.maxDB))}" aria-label="Heaviest dumbbell in ${U()}" style="flex:1"><span class="mute" style="width:44px">${U()}</span></span></div>
+    <div class="field"><span class="row" style="justify-content:space-between">Heaviest dumbbell (optional)${unitSeg('gymUnit', 'span', u)}</span><span class="row" style="gap:10px"><input id="gMax" inputmode="decimal" value="${shown}" data-orig="${shown}" aria-label="Heaviest dumbbell in ${u}" style="flex:1"><span class="mute" style="width:44px">${u}</span></span></div>
     <button class="btn" data-a="saveGym">Save</button>
     ${id ? `<button class="btn danger sm" data-a="archiveGym" data-g="${esc(id)}" style="margin-top:10px">Archive (hotel changed)</button>` : ''}`;
 }
@@ -1372,17 +1382,17 @@ const A = {
   setGymHere(d) { S.data.gyms.current = d.g; LS.set('hereSet', ymd(today0())); saveGyms(); render(); },
   editGym(d) { S.gymDraft = null; openSheet('gym', d.g); },
   gymUnit(d) {
-    const dr = S.gymDraft; if (!dr || (d.u === 'lb') === (U() === 'lb')) return;
+    const dr = S.gymDraft, to = d.u === 'lb' ? 'lb' : 'kg'; if (!dr || to === dbUnit(dr)) return;
     dr.name = $('#gName').value; dr.airport = $('#gAirport').value; dr.group = $('#gGroup').value; dr.maxDB = gymMaxKg(dr);
-    S.cfg.unit = d.u === 'lb' ? 'lb' : 'kg'; save('cfg'); renderSheet();
+    dr.dbUnit = to; renderSheet(); // this gym only – the app-wide unit (Progress, logging) is untouched
   },
   toggleEq(d, el) { const dr = S.gymDraft; const i = dr.equip.indexOf(d.e); if (i >= 0) dr.equip.splice(i, 1); else dr.equip.push(d.e); el.classList.toggle('on', i < 0); },
   saveGym() {
     const dr = S.gymDraft; const name = ($('#gName').value || '').trim(); if (!name) { toast('Give it a name'); return; }
     const airport = ($('#gAirport').value || '').trim().toUpperCase(); const group = $('#gGroup').value; const mx = gymMaxKg(dr);
     const list = S.data.gyms.gyms;
-    if (dr._for) { const g = list.find((x) => x.id === dr._for); Object.assign(g, { name, airport, group, equip: dr.equip, maxDB: mx }); delete g.unset; }
-    else { const id = (airport || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '-' + uid().slice(0, 4); list.push({ id, name, airport, group, equip: dr.equip, maxDB: mx, lastUsed: null }); S.data.gyms.current = id; }
+    if (dr._for) { const g = list.find((x) => x.id === dr._for); Object.assign(g, { name, airport, group, equip: dr.equip, maxDB: mx, dbUnit: dbUnit(dr) }); delete g.unset; }
+    else { const id = (airport || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '-' + uid().slice(0, 4); list.push({ id, name, airport, group, equip: dr.equip, maxDB: mx, dbUnit: dbUnit(dr), lastUsed: null }); S.data.gyms.current = id; }
     saveGyms(); closeSheet(); render(); toast('Saved');
   },
   archiveGym(d) { const g = S.data.gyms.gyms.find((x) => x.id === d.g); if (!g) return; g.archived = true; if (S.data.gyms.current === g.id) S.data.gyms.current = S.data.gyms.gyms.find((x) => !x.archived).id; saveGyms(); closeSheet(); render(); toast('Archived'); },

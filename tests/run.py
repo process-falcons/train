@@ -87,6 +87,10 @@ def t_basics(page):
           f"train-{VERSION}" in (ROOT / "sw.js").read_text() and (ROOT / "index.html").read_text().count(f"?v={VERSION}") == 2)
     check("Today shows the planned session", page.locator(".hero h2").inner_text() == "Lower + pull")
     check("planned session is tagged PLANNED", page.locator(".hero .tag").first.inner_text().startswith("PLANNED"))
+    rows = page.locator(".exlist li").all_inner_texts()
+    pair = next(r for r in rows if "Leg press" in r)
+    check("superset row shows each exercise's own sets (4 × 6–10 and 3 × 10/side)", "4 × 6–10" in pair and "3 × 10/side" in pair, pair)
+    check("single exercise row still shows one label", any("Kettlebell swing" in r and r.count("×") == 1 and "3 × 8–10" in r for r in rows), rows[0])
     check("location button on Today", "Home gym" in page.locator(".herepill").inner_text())
     rc = page.locator(".card.rec")
     txt = rc.inner_text() if rc.count() else "missing"
@@ -349,6 +353,20 @@ def t_dumbbells(page):
     lb = page.locator("#gMax").input_value()
     page.locator('[data-a="gymUnit"][data-u="kg"]').tap(); wait(page, 200)
     check("kg → lb → kg without drift", lb == "44" and page.locator("#gMax").input_value() == "20", lb)
+    check("a limit entered as 50 lb earlier (22.68 kg) opens in lb; 20 kg stays kg", page.evaluate("[dbUnit({ maxDB: 22.68 }), dbUnit({ maxDB: 20 }), dbUnit({ maxDB: 22.5 }), dbUnit({ maxDB: 22.68, dbUnit: 'kg' }), dbUnit({})]") == ["lb", "kg", "kg", "kg", "kg"])
+    # the unit belongs to the gym: choosing lb here must not change the rest of the app
+    page.locator('[data-a="gymUnit"][data-u="lb"]').tap(); wait(page, 200)
+    check("choosing lb in the gym editor leaves the app-wide unit alone", page.evaluate("U()") == "kg")
+    page.locator("#gMax").fill("50"); page.locator('[data-a="saveGym"]').tap(); wait(page, 400)
+    g = page.evaluate("(() => { const g = gym('ord-hotel'); return { maxDB: g.maxDB, dbUnit: g.dbUnit }; })()")
+    check("saved per gym: 50 lb stored as kg with the gym's unit", g["dbUnit"] == "lb" and abs(g["maxDB"] - 22.68) < 0.01, g)
+    page.locator('[data-a="editGym"][data-g="ord-hotel"]').tap(); wait(page, 400)
+    check("reopening shows that gym in lb", page.locator("#gMax").input_value() == "50" and page.locator('[data-a="gymUnit"].on').inner_text() == "lb")
+    page.evaluate("closeSheet()"); wait(page, 200)
+    page.locator('[data-a="editGym"][data-g="home"]').tap(); wait(page, 400)
+    check("other gyms stay in kg", page.locator('[data-a="gymUnit"].on').inner_text() == "kg")
+    page.evaluate("closeSheet(); A.go({v:'progress'})"); wait(page, 300)
+    check("Progress still in kg", page.locator('.head [data-a="unit"].on').inner_text() == "kg" and "kg" in page.locator(".card:has-text('Body')").first.inner_text())
     page.evaluate("closeSheet(); A.go({v:'today'})"); wait(page)
 
 
