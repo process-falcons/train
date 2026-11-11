@@ -1,6 +1,6 @@
-/* Offline support. App files come from the network when there is signal (so updates show straight away)
-   and from the cache when there isn't. */
-const VERSION = 'train-1.14.0';
+/* Offline support. Versioned files (app.js?v=…, styles.css?v=…, icons) come straight from the cache – a release changes
+   their URL. The page itself comes from the network when there is signal (so updates show straight away), else the cache. */
+const VERSION = 'train-1.15.0';
 const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
@@ -17,8 +17,10 @@ self.addEventListener('activate', (e) => {
 });
 
 function fromNetwork(req, c) {
-  return fetch(req, { cache: 'no-store' }).then((res) => { if (res.ok) c.put(req, res.clone()); return res; });
+  return fetch(req, { cache: 'no-cache' }).then((res) => { if (res.ok) c.put(req, res.clone()); return res; }); // no-cache: revalidate, so unchanged files come back as a cheap 304
 }
+// app.js?v= / styles.css?v= / icons / manifest only change with a new VERSION, so the cached copy is always right
+const isStatic = (url) => url.searchParams.has('v') || /\/icons\/|manifest\.webmanifest$/.test(url.pathname);
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
@@ -36,13 +38,15 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.origin !== location.origin) return;
-  // Network first with a 3 s limit, then the cached copy.
   e.respondWith(caches.open(VERSION).then(async (c) => {
+    // offline right after an update: fall back to the copy cached without ?v (install precaches ./app.js etc.)
+    if (isStatic(url)) return (await c.match(req)) || fromNetwork(req, c).catch(() => c.match(req, { ignoreSearch: true }));
+    // the page itself: network first (so a new release shows straight away), cached copy if slow or offline
     const cached = () => c.match(req, { ignoreSearch: true }).then((h) => h || c.match('./index.html'));
     try {
       return await Promise.race([
         fromNetwork(req, c),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 3000)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 2500)),
       ]);
     } catch (err) {
       return (await cached()) || fetch(req);

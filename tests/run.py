@@ -49,8 +49,8 @@ def iphone(p):
     return p.devices["iPhone 13"]
 
 
-def open_app(browser, p, url, day, hour=8):
-    ctx = browser.new_context(**iphone(p), timezone_id="Europe/London")
+def open_app(browser, p, url, day, hour=8, tz="Europe/London"):
+    ctx = browser.new_context(**iphone(p), timezone_id=tz)
     page = ctx.new_page()
     page.clock.set_fixed_time(datetime(2030, 1, day, hour, 0, tzinfo=timezone.utc))
     page.on("pageerror", lambda e: errors.append(f"pageerror after check {len(results)} ({results[-1][0] if results else "-"}): {e}"))
@@ -105,12 +105,12 @@ def t_basics(page):
     check("14-day charts for HRV, resting HR and sleep with normal range", sh.locator("svg.chart").count() == 3 and "normal" in stx)
     page.locator('#sheet [data-a="closeSheet"]').tap(); wait(page, 300)
     # no data for last night yet → waiting card; HRV only → sleep "waiting"
-    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); render()"); wait(page, 200)
+    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); invalidate(); render()"); wait(page, 200)
     wc = page.locator(".card.rec.wait")
     check("no data yet: waiting card instead of nothing", wc.count() == 1 and "Waiting for last night" in wc.inner_text(), wc.inner_text() if wc.count() else "missing")
-    page.evaluate("S.data.cardio.health.push({ date: '2030-01-08', hrv: 60, hrvType: 'sdnn' }); render()"); wait(page, 200)
+    page.evaluate("S.data.cardio.health.push({ date: '2030-01-08', hrv: 60, hrvType: 'sdnn' }); invalidate(); render()"); wait(page, 200)
     check("HRV in, sleep not yet: card shows HRV and 'Sleep waiting'", "HRV" in page.locator(".card.rec").inner_text() and "waiting" in page.locator(".card.rec").inner_text(), page.locator(".card.rec").inner_text())
-    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); render(); window.scrollTo(0, 0)"); wait(page, 200)
+    page.evaluate("S.data.cardio.health = S.data.cardio.health.filter((x) => x.date !== '2030-01-08'); invalidate(); render(); window.scrollTo(0, 0)"); wait(page, 200)
     page.evaluate("""() => { const el = document.querySelector('.head'); const x = 200, y0 = 140;
       const ev = (type, y) => { const e = new Event(type, { bubbles: true, cancelable: true }); const pt = [{ identifier: 1, target: el, clientX: x, clientY: y }];
         Object.defineProperty(e, 'touches', { value: type === 'touchend' ? [] : pt }); Object.defineProperty(e, 'changedTouches', { value: pt }); return e; };
@@ -229,7 +229,7 @@ def t_workout(page):
     check("Fitness: 30-day recovery strip", page.locator(".fitrow:has-text('Recovery') svg rect").count() >= 20)
     check("Fitness: sleep, resting HR and HRV trends", all(page.locator(f".fitrow:has-text('{x}')").count() == 1 for x in ("Sleep", "Resting heart rate", "HRV")))
     check("same-day weight: the one logged in the app wins over Zepp", "79.5 kg" in page.locator(".card:has-text('Body')").first.inner_text())
-    check("Zepp weight used when the app has none that day", page.evaluate("(() => { const k = S.data.body; S.data.body = { entries: [] }; const v = bodyKg(); S.data.body = k; return v; })()") == 78.9)
+    check("Zepp weight used when the app has none that day", page.evaluate("(() => { const k = S.data.body; S.data.body = { entries: [] }; invalidate(); const v = bodyKg(); S.data.body = k; invalidate(); return v; })()") == 78.9)
     check("Fitness: COROS VO2max/FTP with history lines", "VO2max" in fit.inner_text() and fit.locator(".coros svg").count() >= 2)
     shot(page, "progress-fitness")
     page.evaluate("A.go({v:'today'})"); wait(page)
@@ -282,6 +282,20 @@ def t_roster(page):
     m = month(page)
     check("layover day with an overnight flight home: hotel session wins", m["2030-01-18"]["lb"] == "Hotel" and m["2030-01-18"]["auto"], m.get("2030-01-18"))
     check("…and the day after the overnight is rest", m["2030-01-19"]["lb"] == "Rest" and m["2030-01-19"]["auto"], m.get("2030-01-19"))
+
+
+def t_helpers(browser, p, url):
+    # US layover: a date-only string must not slip to the previous day (it used to be read as UTC midnight)
+    ctx, page = open_app(browser, p, url, 8, hour=15, tz="America/New_York")
+    check("dates don't slip a day west of UTC", page.evaluate("shortDate('2030-01-08')") == "8 Jan", page.evaluate("shortDate('2030-01-08')"))
+    check("sleep never shows ':60' minutes", page.evaluate("hrs(7.999)") == "8 h 00", page.evaluate("hrs(7.999)"))
+    check("comma decimals are read (74,5)", page.evaluate("num('74,5')") == 74.5)
+    # a background sync must not wipe what you're typing in Settings
+    page.evaluate("A.go({v:'settings'})"); page.wait_for_timeout(300)
+    page.locator("#cOwner").fill("typed-but-not-saved"); page.locator("#cOwner").focus()
+    page.evaluate("bgRender()"); page.wait_for_timeout(200)
+    check("background refresh waits while you're typing", page.locator("#cOwner").input_value() == "typed-but-not-saved")
+    ctx.close()
 
 
 def t_layover_gym(browser, p, url):
@@ -349,6 +363,10 @@ def main():
             except Exception as e:  # keep going so one failure doesn't hide the rest
                 check(f"{t.__name__} ran to the end", False, repr(e)[:300])
         ctx.close()
+        try:
+            t_helpers(browser, p, url)
+        except Exception as e:
+            check("t_helpers ran to the end", False, repr(e)[:300])
         try:
             t_layover_gym(browser, p, url)
         except Exception as e:
