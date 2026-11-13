@@ -1,6 +1,6 @@
 /* Offline support. Versioned files (app.js?v=…, styles.css?v=…, icons) come straight from the cache – a release changes
    their URL. The page itself comes from the network when there is signal (so updates show straight away), else the cache. */
-const VERSION = 'train-1.15.1';
+const VERSION = 'train-1.15.2';
 const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 

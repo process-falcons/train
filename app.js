@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.15.2';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio', 'hrv_manual'];
@@ -836,7 +836,8 @@ function vSession() {
       <button class="textbtn" data-a="finish">Finish</button></div>
     <div class="segs" style="grid-template-columns:repeat(${bkeys.length},minmax(0,1fr))">${segs}</div>
     <div class="small mute" style="padding:0 8px 12px">${doneSets} of ${a.steps.length} sets logged</div>
-    <div class="stack">${groups}</div></div>`;
+    <div class="stack">${groups}
+      <button class="btn finishbtn" data-a="finish">${ic('check', 20, 2.6)}Finish workout<span>${doneSets} of ${a.steps.length} sets</span></button></div></div>`;
 }
 const exFinished = (it) => it.sets.every((s) => s.done || s.skipped);
 
@@ -1269,9 +1270,11 @@ function vGyms() {
    The weight itself is stored in kg; an untouched value keeps its stored kg so it never drifts through rounding */
 function dbUnit(g) {
   if (g && g.dbUnit) return g.dbUnit === 'lb' ? 'lb' : 'kg';
-  // not chosen yet: a limit that is a round number of pounds but not of kilos (22.68 kg = 50 lb) was entered in lb
-  const kg = g && g.maxDB, lb = kg * LB;
-  return kg > 0 && Math.abs(lb - Math.round(lb / 2.5) * 2.5) < 0.06 && Math.abs(kg - Math.round(kg * 2) / 2) > 0.06 ? 'lb' : 'kg';
+  // not chosen yet: a stored limit that is a round number of pounds but not of kilos (22.68 kg = 50 lb) was entered in lb, and the reverse;
+  // otherwise layover hotels (US) start in lb and home gyms in kg
+  const kg = g && g.maxDB, roundLb = Math.abs(kg * LB - Math.round(kg * LB / 2.5) * 2.5) < 0.06, roundKg = Math.abs(kg - Math.round(kg * 2) / 2) < 0.06;
+  if (kg > 0 && roundLb !== roundKg) return roundLb ? 'lb' : 'kg';
+  return g && g.group === 'hotel' ? 'lb' : 'kg';
 }
 function gymMaxKg(d) {
   const el = $('#gMax'); if (!el) return d.maxDB ?? null;
