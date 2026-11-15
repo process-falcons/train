@@ -1,7 +1,7 @@
 'use strict';
 /* Train – workout tracker. Data lives in a private GitHub repo; this device keeps a copy and a queue of changes. */
 
-const APP_VERSION = '1.15.2';
+const APP_VERSION = '1.16.0';
 const DEV = /[?&]dev\b/.test(location.search);
 const DEV_BASE = /[?&]dev=fixtures\b/.test(location.search) ? 'tests/fixtures/' : '../train-data/';
 const FILES = ['programme', 'gyms', 'plan', 'coros', 'body', 'schedule', 'roster', 'cardio', 'hrv_manual'];
@@ -118,7 +118,7 @@ async function pullAll() {
       }
     }
   }
-  for (const q of S.queue) if (q.kind === 'file') next[q.name] = q.data; // local changes not yet uploaded win
+  for (const q of S.queue) { if (q.kind === 'file') next[q.name] = q.data; else if (q.kind === 'patch') next[q.name] = applyPatch(next[q.name], q.days); } // local changes not yet uploaded win
   if (!next.body) next.body = { entries: [] };
   S.data = next; save('data', 'logs'); invalidate();
 }
@@ -126,11 +126,18 @@ async function pullAll() {
 async function pushQueue() {
   while (S.queue.length) {
     const q = S.queue[0];
-    if (DEV) { if (q.kind === 'file') { const o = LS.get('devfiles', {}); o[q.name] = q.data; LS.set('devfiles', o); } S.queue.shift(); save('queue'); continue; }
+    if (DEV) { if (q.kind === 'file' || q.kind === 'patch') { const o = LS.get('devfiles', {}); o[q.name] = q.kind === 'file' ? q.data : S.data[q.name]; LS.set('devfiles', o); } S.queue.shift(); save('queue'); continue; }
     if (q.kind === 'log') {
       const path = 'logs/' + q.name;
       try { await GH.put(path, q.data, null, 'Log ' + q.name); }
       catch (e) { if (e.status === 422 || e.status === 409) { const ex = await GH.get(path); await GH.put(path, q.data, ex && ex.sha, 'Log ' + q.name); } else throw e; }
+    } else if (q.kind === 'patch') {   // fetch the latest copy, change only these days, write it back (retry once if it changed meanwhile)
+      for (let tries = 0; ; tries++) {
+        const ex = await GH.get(q.name + '.json');
+        const cur = ex && ex.content ? JSON.parse(b64dec(ex.content)) : null;
+        try { await GH.put(q.name + '.json', applyPatch(cur, q.days), ex && ex.sha, 'Update ' + q.name + ' from app'); break; }
+        catch (e) { if (tries || (e.status !== 409 && e.status !== 422)) throw e; }
+      }
     } else {
       const ex = await GH.get(q.name + '.json');
       await GH.put(q.name + '.json', q.data, ex && ex.sha, 'Update ' + q.name + ' from app');
@@ -139,8 +146,15 @@ async function pushQueue() {
   }
 }
 
+/* patch = { "YYYY-MM-DD": { field: value, … } } merged into file.days (a null value removes that field) */
+function applyPatch(file, days) {
+  const f = { ...(file || {}), days: { ...((file && file.days) || {}) } };
+  for (const [k, v] of Object.entries(days)) { const d = { ...(f.days[k] || {}) }; for (const [x, y] of Object.entries(v)) { if (y === null && x !== 'sid') delete d[x]; else d[x] = y; } f.days[k] = d; }
+  return f;
+}
 function enqueue(item) {
   if (item.kind === 'file') S.queue = S.queue.filter((q) => !(q.kind === 'file' && q.name === item.name));
+  if (item.kind === 'patch') { const p = S.queue.find((q) => q.kind === 'patch' && q.name === item.name); if (p) { for (const [k, v] of Object.entries(item.days)) p.days[k] = { ...(p.days[k] || {}), ...v }; save('queue'); syncSoon(); return; } }
   S.queue.push(item); save('queue'); syncSoon();
 }
 
@@ -658,6 +672,24 @@ function hrvWrite(k, v) {
   enqueue({ kind: 'file', name: 'hrv_manual', data: f });
   S.hrvDraft = null; invalidate(); closeSheet(); render();
 }
+/* move a workout: pick a day in the next two weeks; a day that already has a workout swaps with it */
+const dayName = (d) => `${DOW[d.getDay()].slice(0, 3)} ${d.getDate()} ${MON[d.getMonth()]}`;
+function vMoveSheet(arg) {
+  const [from, sid] = arg, f = parseD(from), t0 = today0(), rows = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(t0); d.setDate(t0.getDate() + i); const k = ymd(d); if (k === from) continue;
+    const p = dayPlan(d), has = p && p.sid, lbl = has ? (session(p.sid) || {}).name || p.sid : p && p.rest ? 'Rest' : dayLabel(p) || 'Free';
+    rows.push(`<button class="opt" data-a="moveTo" data-d="${k}"><span style="width:112px;flex:0 0 auto;white-space:nowrap;font-weight:600">${i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : dayName(d)}</span><span class="grow"><span style="display:block">${esc(lbl)}</span>${has ? '<span class="small amb">swaps with it</span>' : ''}</span>${dutyTag(d)}</button>`);
+  }
+  return `${sheetHead(`${esc((session(sid) || {}).name || sid)} · ${dayName(f)}`, 'Move to another day')}${rows.join('')}`;
+}
+function moveWorkout(from, to, sid) {
+  const pt = dayPlan(parseD(to)), other = pt && pt.sid ? pt.sid : null;
+  const days = { [to]: { sid, moved: 'Moved from ' + dayName(parseD(from)) }, [from]: { sid: other, moved: other ? 'Moved from ' + dayName(parseD(to)) : 'Moved to ' + dayName(parseD(to)) } };
+  S.data.schedule = applyPatch(S.data.schedule, days); save('data'); invalidate();
+  enqueue({ kind: 'patch', name: 'schedule', days });
+  S.pick = null; closeSheet(); A.selDay({ d: to }); toast(other ? 'Swapped the two days' : 'Workout moved');
+}
 function vRecoverySheet(k) {
   const r = recovery(k); if (!r) return '<div class="empty">No recovery data for this day.</div>';
   const [col, label, advice] = r.score == null ? ['var(--dim)', 'Building baseline', 'The score needs a few nights of data first.'] : BAND[r.band];
@@ -743,7 +775,7 @@ function vToday() {
   const doneLogs = loggedOn(sel);
   const g = dayGym(sel);
   const cx = cardioFor(sd0);
-  const extra = sd && (sd.note || cx.rest) ? `<div class="plannote">${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${cx.rest ? `<span class="mute">Also: ${esc(cx.rest)}</span>` : ''}</div>` : '';
+  const extra = sd && (sd.note || cx.rest || sd.moved) ? `<div class="plannote">${sd.moved ? `<span class="acc">${esc(sd.moved)}</span>` : ''}${sd.note ? `<span>${esc(sd.note)}</span>` : ''}${cx.rest ? `<span class="mute">Also: ${esc(cx.rest)}</span>` : ''}</div>` : '';
 
   if (!sid) {
     h += `<div class="card"><div class="hero"><div class="row" style="gap:6px"><span class="tag">${isToday ? 'TODAY' : esc(selName.toUpperCase())}</span>${ap ? '<span class="tag auto">AUTO</span>' : ''}${ph ? `<span class="tag acc">${esc(ph.name.toUpperCase())}</span>` : ''}</div><h2>${ap && ap.rest ? 'Rest day' : 'No lifting planned'}</h2>${extra}</div>
@@ -771,7 +803,7 @@ function vToday() {
       <button class="loc" data-a="go" data-v="gyms">${ic('pin', 18, 2.2, 'style="color:var(--accent)"')}<span class="grow" style="font-size:15px;font-weight:600">${esc(g.name)} <span class="mute" style="font-weight:400">· ${g.unset ? '<span class="warn">equipment not set</span>' : swaps ? swaps + ' swap' + (swaps > 1 ? 's' : '') : 'no swaps'}</span></span><span class="mute">${ic('chev', 16)}</span></button>
       <ol class="exlist">${blocks.join('')}</ol>
       ${s.quick ? `<div style="padding:0 12px"><button class="btn ghost sm" data-a="genQuick" data-f="${s.focus}" data-keep="1">${ic('swap', 16)}Shuffle exercises</button></div>` : ''}
-      <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button></div></div>`;
+      <div class="btn-wrap"><button class="btn" data-a="start" data-s="${sid}">${playIc}${S.active ? 'Start new session' : isDone ? 'Do it again' : 'Start session'}</button>${isDone ? '' : `<button class="movebtn" data-a="moveSheet" data-d="${ymd(sel)}" data-s="${sid}">${ic('cal', 16)} Move to another day</button>`}</div></div>`;
   }
 
   h += cardioCards(cx.items, ymd(sel));
@@ -809,6 +841,22 @@ function startSession(sid) {
   S.active = { id: uid(), sid, name: s.name, label: s.label, gymId: g.id, gymName: g.name, start: Date.now(), items, steps: buildSteps(items), cur: 0, rest: null };
   save('active'); S.view = 'session'; unlockAudio(); wake(); render(); toTop();
 }
+function vSessGymSheet() {
+  const a = S.active;
+  return `${sheetHead('Exercises you haven’t started change to suit its equipment', 'Where are you training?')}${gyms().filter((x) => !x.archived).map((x) => `<button class="opt ${x.id === a.gymId ? 'best' : ''}" data-a="sessGymSet" data-g="${esc(x.id)}"><span class="grow"><span style="display:block;font-weight:600">${esc(x.name)}${x.airport ? ` <span class="mute" style="font-weight:500">· ${esc(x.airport)}</span>` : ''}</span></span>${x.id === a.gymId ? '<span class="small acc" style="font-weight:700">Here</span>' : ''}</button>`).join('')}`;
+}
+function sessionGym(id) {
+  const a = S.active, g = gym(id); if (!a || !g) return;
+  a.gymId = g.id; a.gymName = g.name;
+  for (const it of a.items) {
+    if (it.sets.some((s) => s.done || s.skipped)) continue;           // keep what you've already done
+    const src = { slot: it.slot, ex: it.opts, sets: it.sets.length, lo: it.lo, hi: it.hi };
+    const r = resolve(a.sid, src, g), pf = prefill(src, r.ex, g);
+    Object.assign(it, { ex: r.ex, swapped: r.swapped, why: r.why, tip: pf.tip, lastSets: pf.last || null, sets: pf.sets.map((p) => ({ ...p, done: false })) });
+  }
+  S.data.gyms.current = g.id; LS.set('hereSet', ymd(today0())); saveGyms();
+  save('active'); closeSheet(); render(); toast('Training at ' + g.name);
+}
 function goStep(i, r, editing) { const a = S.active; const k = a.steps.findIndex(([x, y]) => x === i && y === r); if (k >= 0) a.cur = k; S.editing = editing; save('active'); render(); }
 function curStep() { const a = S.active; return a.steps[a.cur] || a.steps[0]; }
 function stepDone([i, r]) { const s = S.active.items[i].sets[r]; return s.done || s.skipped; }
@@ -832,7 +880,7 @@ function vSession() {
 
   return `<div class="view session">
     <div class="shead"><button class="iconbtn" data-a="go" data-v="today" aria-label="Back to Today">${ic('back', 20)}</button>
-      <div class="mid"><b>${esc(a.name)}</b><span class="small mute"><span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · ${esc(a.gymName)}</span></div>
+      <div class="mid"><b>${esc(a.name)}</b><button class="small mute gymlink" data-a="sessGym" aria-label="Training at ${esc(a.gymName)} – change"><span id="elapsed">${fmtTime((Date.now() - a.start) / 1000)}</span> · <u>${esc(a.gymName)}</u> ${ic('chev', 11, 2.4)}</button></div>
       <button class="textbtn" data-a="finish">Finish</button></div>
     <div class="segs" style="grid-template-columns:repeat(${bkeys.length},minmax(0,1fr))">${segs}</div>
     <div class="small mute" style="padding:0 8px 12px">${doneSets} of ${a.steps.length} sets logged</div>
@@ -949,7 +997,7 @@ function vSwapSheet(ii) {
   return `${sheetHead(`Swap ${esc(it.slot)} · ${esc(g.name)}`, `Choose an exercise`)}
     <div class="label" style="margin:6px 0 8px">From your programme</div>${plan}
     ${same ? `<div class="label" style="margin:16px 0 8px">Other ${esc(patName.toLowerCase())} options</div>${same}` : ''}
-    <button class="toggle" data-a="toggleRemember" style="margin-top:6px"><span>Remember this swap for ${esc(g.name)}</span><span class="sw ${S.remember ? 'on' : ''}" id="remSw"></span></button>
+    <button class="toggle" data-a="toggleRemember" style="margin-top:6px"><span>Remember this swap for <b>${esc(g.name)}</b><span class="small mute" style="display:block;margin-top:2px">Wrong place? Tap the gym name at the top of the workout.</span></span><span class="sw ${S.remember ? 'on' : ''}" id="remSw"></span></button>
     <div class="label" style="margin:16px 0 8px">Any exercise</div>
     <label class="field" style="margin-bottom:8px"><span class="sr">Search exercises</span><input id="exSearch" data-search="${ii}" placeholder="Search all exercises" autocomplete="off"></label>
     <div id="exResults"></div>
@@ -1321,7 +1369,7 @@ function vSettings() {
 /* ---------- sheet & toast ---------- */
 function openSheet(kind, arg) { S.sheet = { kind, arg }; renderSheet(); $('#sheet').scrollTop = 0; document.documentElement.classList.add('locked'); $('#sheet').classList.add('on'); $('#scrim').classList.add('on'); }
 const sheetHead = (sub, title, mb = 12) => `<div class="row" style="justify-content:space-between;margin-bottom:${mb}px"><div><div class="small mute">${sub}</div><h3>${title}</h3></div><button class="iconbtn" data-a="closeSheet" aria-label="Close">${ic('x', 18)}</button></div>`;
-const SHEETS = { swap: (a) => vSwapSheet(a), finish: () => vFinishSheet(), lift: (a) => vLiftSheet(a), log: (a) => vLogSheet(a), body: () => vBodySheet(), gym: (a) => vGymSheet(a), recovery: (a) => vRecoverySheet(a), hrv: (a) => vHrvSheet(a) };
+const SHEETS = { move: (a) => vMoveSheet(a), sessGym: () => vSessGymSheet(), swap: (a) => vSwapSheet(a), finish: () => vFinishSheet(), lift: (a) => vLiftSheet(a), log: (a) => vLogSheet(a), body: () => vBodySheet(), gym: (a) => vGymSheet(a), recovery: (a) => vRecoverySheet(a), hrv: (a) => vHrvSheet(a) };
 function renderSheet() {
   if (!S.sheet) return; const { kind, arg } = S.sheet;
   $('#sheet').innerHTML = '<div class="grab-zone" aria-hidden="true"><div class="grab"></div></div>' + (SHEETS[kind] ? SHEETS[kind](arg) : '');
@@ -1340,6 +1388,10 @@ const A = {
   selDay(d) { const t = today0(), p = parseD(d.d); S.selDay = d.d === ymd(t) ? null : d.d; S.pick = null; S.weekOff = Math.round((weekStart(p) - weekStart(t)) / (7 * DAY)); S.monthOff = (p.getFullYear() - t.getFullYear()) * 12 + p.getMonth() - t.getMonth(); render(); },
   recSheet(d) { openSheet('recovery', d.d); },
   refresh() { freshData(true); },
+  moveSheet(d) { openSheet('move', [d.d, d.s]); },
+  moveTo(d) { const [from, sid] = S.sheet.arg; moveWorkout(from, d.d, sid); },
+  sessGym() { openSheet('sessGym'); },
+  sessGymSet(d) { sessionGym(d.g); },
   hrvSheet(d) { S.hrvDraft = null; openSheet('hrv', d.d); },
   hrvStep(d) { const el = $('#hrvIn'); const v = parseInt(el ? el.value : S.hrvDraft, 10) || 0; S.hrvDraft = Math.max(5, Math.min(250, v + +d.d)); if (el) el.value = S.hrvDraft; },
   hrvSave() { const v = parseInt(($('#hrvIn') || {}).value, 10); if (!(v >= 5 && v <= 250)) { toast('Enter HRV in ms (5–250)'); return; } hrvWrite(S.sheet.arg, v); toast('HRV saved'); },
